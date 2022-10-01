@@ -913,4 +913,9 @@ void* epBuffer(unsigned int n)
 {
     return (void*)EPBuffers().desc(n);
 }
+
+bool USBCore_::isSuspended()
+{
+    return USBCore().usbDev().cur_status == USBD_SUSPENDED;
+}
 #endif

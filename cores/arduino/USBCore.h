@@ -147,6 +147,7 @@ class USBCore_
 
         void connect();
         void disconnect();
+        bool isSuspended();
 
         /*
          * PluggableUSB interface.
