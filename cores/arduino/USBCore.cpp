@@ -5,6 +5,7 @@ extern "C" {
 #include "gd32/usb.h"
 #include "usbd_enum.h"
 #include "usbd_lld_regs.h"
+#include "usbd_pwr.h"
 #include "usbd_transc.h"
 }
 
@@ -624,10 +625,51 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
     auto flags = ep & 0xf0;
     ep &= 0x7;
     auto wrote = 0;
+    auto usbd = &USBCore().usbDev();
 
+#ifdef USBD_REMOTE_WAKEUP
+    /*
+     * The workaround below is for a complex and subtle bug. The
+     * low-level USBD firmware tracks the USBD peripheral state in
+     * usbd->cur_status. The suspend interrupt handler saves it in
+     * usbd->backup_status, and then sets it to USBD_SUSPENDED. The
+     * wakeup interrupt handler restores it.
+     *
+     * Due to a limitation or bug in the USBD peripheral, the suspend
+     * interrupt can fire multiple times if the application sends a
+     * remote wakeup. This can overwrite usbd->backup_status, causing
+     * the wakeup interrupt to incorrectly restore the status as
+     * USBD_SUSPENDED. The host and USBD peripheral will both think
+     * the device is resumed, but the low-level firmware thinks it's
+     * still suspended, and won't respond appropriately to bus traffic
+     * or application requests.
+     *
+     * The workaround restores usbd->cur_status before the suspend
+     * handler erroneously overwrites the backup. The
+     * standard_hid_keyboard example in the GD32F30x firmware bundle
+     * uses this workaround, without explanation.
+     *
+     * Application note AN077 describes possible multiple firings of
+     * the suspend interrupt during a remote wakeup request, but also
+     * doesn't adequately explain. AN077 also implies that ESOFIF is
+     * set on any missing SOF, disregarding whether the line state is
+     * suspend (long-"J-like") or resume (long-K). It also implies
+     * that SPSIF similarly does not distinguish these line states.
+     */
+    if (usbd->cur_status == USBD_SUSPENDED && usbd->pm.remote_wakeup) {
+        usbd_remote_wakeup_active(usbd);
+        // Work around low-level USBD firmware bug
+        usbd->cur_status = usbd->backup_status;
+        return -1;
+    }
+#endif
+    // Discard data instead of blocking indefinitely, if unconfigured
+    if (usbd->cur_status != USBD_CONFIGURED) {
+        return -1;
+    }
     // Make sure any transactions made outside of PluggableUSB are
     // cleaned up.
-    auto transc = &USBCore().usbDev().transc_in[ep];
+    auto transc = &usbd->transc_in[ep];
     usb_transc_config(transc, nullptr, 0, 0);
 
     // TODO: query the endpoint for its max packet length.
