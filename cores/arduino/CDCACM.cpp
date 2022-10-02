@@ -76,7 +76,11 @@ bool CDCACM_::setup(arduino::USBSetup& setup)
             USB_RecvControl((void*)&this->lc.lineCoding, sizeof(this->lc.lineCoding));
         } else if (setup.bRequest == CDC_SET_CONTROL_LINE_STATE) {
             this->lineState = setup.wValueL;
-            if (this->lineState > 0) {
+            // Bit 0 of lineState is DTR
+            if ((this->lineState & 0x1) == 0 && this->lc.lineCoding.dwDTERate == 1200) {
+                // Reset on "1200bps touch" from Arduino
+                NVIC_SystemReset();
+            } else if (this->lineState > 0) {
                 // setup a better handler that does automatic flushing
                 usbd_int_fops = &usb_inthandler;
             } else {
