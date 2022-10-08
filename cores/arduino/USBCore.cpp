@@ -656,11 +656,15 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
      * suspend (long-"J-like") or resume (long-K). It also implies
      * that SPSIF similarly does not distinguish these line states.
      */
+    usb_disable_interrupts();
     if (usbd->cur_status == USBD_SUSPENDED && usbd->pm.remote_wakeup) {
-        usbd_remote_wakeup_active(usbd);
         // Work around low-level USBD firmware bug
         usbd->cur_status = usbd->backup_status;
+        usb_enable_interrupts();
+        usbd_remote_wakeup_active(usbd);
         return -1;
+    } else {
+        usb_enable_interrupts();
     }
 #endif
     // Discard data instead of blocking indefinitely, if unconfigured
