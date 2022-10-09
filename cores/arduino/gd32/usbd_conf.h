@@ -19,6 +19,9 @@
 /* link power mode support */
 #undef LPM_ENABLED
 
+/* Enable sending remote wakeup */
+#define USBD_REMOTE_WAKEUP
+
 /*
  * TODO: I’m currently using the maximum values allowed by the spec
  * for available interfaces and endpoints, because I can’t know this
