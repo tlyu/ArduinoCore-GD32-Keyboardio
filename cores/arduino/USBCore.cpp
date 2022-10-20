@@ -667,10 +667,6 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
         usb_enable_interrupts();
     }
 #endif
-    // Discard data instead of blocking indefinitely, if unconfigured
-    if (usbd->cur_status != USBD_CONFIGURED) {
-        return -1;
-    }
     // Make sure any transactions made outside of PluggableUSB are
     // cleaned up.
     auto transc = &usbd->transc_in[ep];
