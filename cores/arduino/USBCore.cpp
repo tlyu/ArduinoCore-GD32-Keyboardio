@@ -662,7 +662,6 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
         usbd->cur_status = usbd->backup_status;
         usb_enable_interrupts();
         usbd_remote_wakeup_active(usbd);
-        return -1;
     } else {
         usb_enable_interrupts();
     }
