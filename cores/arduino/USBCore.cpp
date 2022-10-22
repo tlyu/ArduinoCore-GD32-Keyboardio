@@ -406,6 +406,9 @@ class ClassCore
                 // Don’t overflow the hardware buffer table.
                 assert((buf_offset + ep_desc.wMaxPacketSize) <= 512);
 
+                // Reinit EPBuffer, in case a packet got queued after reset
+                // but before configuration
+                EPBuffers().buf(ep).init(ep);
                 usbd->ep_transc[ep][TRANSC_IN] = USBCore_::transcInHelper;
                 usbd->ep_transc[ep][TRANSC_OUT] = USBCore_::transcOutHelper;
                 usbd->drv_handler->ep_setup(usbd, EP_BUF_SNG, buf_offset, &ep_desc);
