@@ -406,6 +406,9 @@ class ClassCore
                 // Don’t overflow the hardware buffer table.
                 assert((buf_offset + ep_desc.wMaxPacketSize) <= 512);
 
+                // Reinit EPBuffer, in case a packet got queued after reset
+                // but before configuration
+                EPBuffers().buf(ep).init(ep);
                 usbd->ep_transc[ep][TRANSC_IN] = USBCore_::transcInHelper;
                 usbd->ep_transc[ep][TRANSC_OUT] = USBCore_::transcOutHelper;
                 usbd->drv_handler->ep_setup(usbd, EP_BUF_SNG, buf_offset, &ep_desc);
@@ -662,15 +665,10 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
         usbd->cur_status = usbd->backup_status;
         usb_enable_interrupts();
         usbd_remote_wakeup_active(usbd);
-        return -1;
     } else {
         usb_enable_interrupts();
     }
 #endif
-    // Discard data instead of blocking indefinitely, if unconfigured
-    if (usbd->cur_status != USBD_CONFIGURED) {
-        return -1;
-    }
     // Make sure any transactions made outside of PluggableUSB are
     // cleaned up.
     auto transc = &usbd->transc_in[ep];
