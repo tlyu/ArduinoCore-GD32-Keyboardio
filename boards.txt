@@ -17,7 +17,17 @@ keyboardio_model_100.build.mcu=cortex-m4
 keyboardio_model_100.upload.maximum_size=1048576
 keyboardio_model_100.upload.maximum_data_size=98304
 keyboardio_model_100.upload.use_1200bps_touch=true
-keyboardio_model_100.upload.wait_for_upload_port=false
+# This needs to be set to true to work around a race condition on Linux
+# systems with udev. Otherwise, udev might not update the permissions
+# on the DFU device to allow non-root access before dfu-util runs.
+# This will time out, and issue a warning, because Arduino expects to see
+# a serial port. However, that gives udev time to update the permissions
+# before dfu-util runs.
+keyboardio_model_100.upload.wait_for_upload_port=true
+keyboardio_model_100.upload_port.vid.0=0x3496
+keyboardio_model_100.upload_port.pid.0=0x0006
+keyboardio_model_100.upload_port.vid.1=0x3496
+keyboardio_model_100.upload_port.pid.1=0x0005
 
 # These two definitions set -D flags to the compiler to get the right code compiled for our MCU 
 keyboardio_model_100.build.series=GD32F30x
