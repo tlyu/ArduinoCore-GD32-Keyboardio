@@ -260,8 +260,32 @@ void usbd_isr (void)
 */
 static void usbd_int_suspend (usb_dev *udev)
 {
-    /* store the device current status */
-    udev->backup_status = udev->cur_status;
+    /* store the device current status, but only if not already suspended */
+    /*
+     * During remote wakeup, the suspend interrupt can fire while already
+     * suspended, corrupting backup_status if this check isn't done.
+     *
+     * Details:
+     *
+     * usbd_remote_wakeup_active() calls resume_mcu(), which is a wrapper
+     * around usbd_leave_suspend(), which clears SETSPS. Clearing SETSPS
+     * re-enables ESOF detection, and also the SPSIF interrupt. ESOF
+     * detection and the SPSIF interrupt don't respect USB line states, so
+     * they can activate during a remote wakeup scenario. The remote wakeup
+     * process relies on this to count the 15ms duration for sending the
+     * remote wakeup signal upstream.
+     *
+     * The SPSIF handling code defers calling usbd_int_suspend() while
+     * RSREQ is set (during the remote wakeup signaling), but once that
+     * countdown is over, the suspend interrupt will fire again while
+     * the the upstream port is driving a resume signal downstream
+     * (typically for another 5ms). It might actually be necessary to
+     * call the suspend handler during remote wakeup, because WKUPIF
+     * detection might only work if SETSPS is set.
+     */
+    if (udev->cur_status != USBD_SUSPENDED) {
+        udev->backup_status = udev->cur_status;
+    }
 
     /* set device in suspended state */
     udev->cur_status = (uint8_t)USBD_SUSPENDED;
