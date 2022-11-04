@@ -761,9 +761,12 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
                 return;
             } else if ((usbd->control.req.bmRequestType & USB_RECPTYPE_MASK) == USB_RECPTYPE_ITF) {
                 reqstat = (usb_reqsta)ClassCore::reqProcess(usbd, &usbd->control.req);
-                if (reqstat == REQ_SUPP
-                    && (usbd->control.req.bmRequestType & USB_TRX_IN) != USB_TRX_IN) {
-                    this->sendZLP(usbd, 0);
+                if (reqstat == REQ_SUPP) {
+                    if ((usbd->control.req.bmRequestType & USB_TRX_IN) != USB_TRX_IN) {
+                        this->sendZLP(usbd, 0);
+                    }
+                } else {
+                    usbd_ep_stall(usbd, 0);
                 }
                 return;
             } else {
@@ -778,10 +781,15 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
 
             // Respond with a ZLP if the host has sent data,
             // because we’ve already handled in in the class request.
-            if (reqstat == REQ_SUPP
-                && ((usbd->control.req.bmRequestType & USB_TRX_IN) != USB_TRX_IN)) {
-                this->sendZLP(usbd, 0);
+            if (reqstat == REQ_SUPP) {
+                if ((usbd->control.req.bmRequestType & USB_TRX_IN) != USB_TRX_IN) {
+                    this->sendZLP(usbd, 0);
+                }
+            } else {
+                usbd_ep_stall(usbd, 0);
             }
+            // Return early, because the usbd_ep_send() call below is for
+            // processing transmissions from the original low-level code.
             return;
 
         /* vendor defined request */
