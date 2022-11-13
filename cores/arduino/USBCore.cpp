@@ -563,6 +563,10 @@ int USBCore_::sendControl(uint8_t flags, const void* data, int len)
         this->flush(0);
     }
 
+    if (wrote != 0) {
+        this->controlWritten = true;
+    }
+
     // Return ‘len’, rather than ‘wrote’, because PluggableUSB
     // calculates descriptor sizes by first having them write to an
     // empty buffer (setting ‘this->maxWrite’ to 0). To accomodate
@@ -734,6 +738,7 @@ usb_dev& USBCore_::usbDev()
 void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
 {
     (void)ep;
+    this->controlWritten = false;
 
     usb_reqsta reqstat = REQ_NOTSUPP;
 
@@ -764,6 +769,9 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
                 if (reqstat == REQ_SUPP) {
                     if ((usbd->control.req.bmRequestType & USB_TRX_IN) != USB_TRX_IN) {
                         this->sendZLP(usbd, 0);
+                    } else if (!this->controlWritten) {
+                        // Send at least a ZLP if nothing was written, to avoid timeouts
+                        this->sendZLP(usbd, 0);
                     }
                 } else {
                     usbd_ep_stall(usbd, 0);
@@ -783,6 +791,9 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
             // because we’ve already handled in in the class request.
             if (reqstat == REQ_SUPP) {
                 if ((usbd->control.req.bmRequestType & USB_TRX_IN) != USB_TRX_IN) {
+                    this->sendZLP(usbd, 0);
+                } else if (!this->controlWritten) {
+                    // Send at least a ZLP if nothing was written, to avoid timeouts
                     this->sendZLP(usbd, 0);
                 }
             } else {
