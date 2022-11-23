@@ -183,8 +183,10 @@ class USBCore_
         // TODO: verify that this only applies to the control endpoint’s use of wLength
         // I think this is only on the setup packet, so it should be fine.
         uint16_t maxWrite = 0;
-        // Whether a control write has occurred during a control transaction
-        bool controlWritten;
+        // Has there been a sendControl (Data IN) on this control transfer?
+        bool didCtlIn;
+        // Has there been a recvControl (Data OUT) on this control transfer?
+        bool didCtlOut;
 
         /*
          * Pointers to the transaction routines specified by ‘usbd_init’.
