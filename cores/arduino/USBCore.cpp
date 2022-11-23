@@ -450,6 +450,11 @@ class ClassCore
                 } else if (sent < 0) {
                     return REQ_NOTSUPP;
                 }
+            } else if ((setup.bmRequestType & USB_RECPTYPE_MASK) == USB_RECPTYPE_EP) {
+                uint8_t ep = EP_ID(setup.wIndex);
+                // Reset endpoint state on ClearFeature(EndpointHalt)
+                EPBuffers().buf(ep).init(ep);
+                return REQ_SUPP;
             } else {
 #ifdef USBD_USE_CDC
                 if (CDCACM().setup(setup))
