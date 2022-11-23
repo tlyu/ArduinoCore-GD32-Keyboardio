@@ -175,6 +175,10 @@ size_t EPBuffer<L>::sendSpace()
 template<size_t L>
 void EPBuffer<L>::flush()
 {
+    // Don't flush an empty buffer
+    if (this->len() == 0) {
+        return;
+    }
     /*
      * Bounce out if a flush is already occurring. This is only
      * possible when ‘flush’ is called from an interrupt, so the
@@ -188,11 +192,16 @@ void EPBuffer<L>::flush()
     this->currentlyFlushing = true;
     usb_enable_interrupts();
 
-    // Only attempt to send if there's data and the device is
-    // configured enough to send it.
-    if (this->len() > 0
-        && (USBCore().usbDev().cur_status >= USBD_CONFIGURED
-            || (this->ep == 0 && USBCore().usbDev().cur_status >= USBD_ADDRESSED))) {
+    // Only attempt to send if the device is configured enough.
+    switch (USBCore().usbDev().cur_status) {
+    case USBD_DEFAULT:
+    case USBD_ADDRESSED:
+        if (this->ep != 0) {
+            break;
+        }
+    // fall through
+    case USBD_CONFIGURED:
+    case USBD_SUSPENDED: {
         auto canWrite = this->waitForWriteComplete();
         if (canWrite) {
             // Only start the next transmission if the device hasn't been
@@ -200,8 +209,12 @@ void EPBuffer<L>::flush()
             this->txWaiting = true;
             USBCore().usbDev().drv_handler->ep_write((uint8_t*)this->buf, this->ep, this->len());
         }
-        this->reset();
+        break;
     }
+    default:
+        break;
+    }
+    this->reset();
     this->currentlyFlushing = false;
 }
 
@@ -262,13 +275,25 @@ bool EPBuffer<L>::waitForWriteComplete()
 {
     // auto start = getCurrentMillis();
     auto ok = true;
-    while (ok && this->txWaiting) {
+    do {
         ok = EPBuffers().pollEPStatus();
+        switch (USBCore().usbDev().cur_status) {
+        case USBD_DEFAULT:
+        case USBD_ADDRESSED:
+            // For non-EP0, abort if no longer configured
+            if (ep != 0) {
+                ok = false;
+                break;
+            }
+        // fall through
+        default:
+            break;
+        }
         // if (getCurrentMillis() - start > 5) {
         //     EPBuffers().buf(ep).transcIn();
         //     ok = false;
         // }
-    }
+    } while (ok && this->txWaiting);
     return ok;
 }
 
