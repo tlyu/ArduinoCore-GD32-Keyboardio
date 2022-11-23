@@ -7,15 +7,6 @@ const uint8_t ACM_EP_MAXLEN = 0x10;
 
 static uint8_t IN_ENDPOINT = 0;
 
-static uint8_t cdc_flush_sof(usb_dev *usbd) {
-    USB_Flush(IN_ENDPOINT);
-    return 0;
-}
-
-usbd_int_cb_struct usb_inthandler = {
-    cdc_flush_sof,
-};
-
 CDCACM_::CDCACM_(uint8_t firstInterface, uint8_t firstEndpoint)
 {
     this->acmInterface = firstInterface;
@@ -80,11 +71,6 @@ bool CDCACM_::setup(arduino::USBSetup& setup)
             if ((this->lineState & 0x1) == 0 && this->lc.lineCoding.dwDTERate == 1200) {
                 // Reset on "1200bps touch" from Arduino
                 NVIC_SystemReset();
-            } else if (this->lineState > 0) {
-                // setup a better handler that does automatic flushing
-                usbd_int_fops = &usb_inthandler;
-            } else {
-                usbd_int_fops = nullptr;
             }
         }
         return true;
