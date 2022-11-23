@@ -11,17 +11,6 @@ extern "C" {
 
 #include <cassert>
 
-/*
- * DO NOT CHANGE THESE VALUES.
- *
- * They are also used by the firmware library’s internal
- * functions. Changing them here may cause that to break.
- */
-#define STR_IDX_LANGID 0
-#define STR_IDX_MFC 1
-#define STR_IDX_PRODUCT 2
-#define STR_IDX_SERIAL 3
-
 // bMaxPower in Configuration Descriptor
 #define USB_CONFIG_POWER_MA(mA)                ((mA)/2)
 #ifndef USB_CONFIG_POWER
@@ -77,6 +66,42 @@ usb_desc_config configDesc = {
     .bMaxPower = USB_CONFIG_POWER_MA(USB_CONFIG_POWER)
 };
 
+#pragma pack(1)
+/* String descriptor with char16_t[], to use UTF-16 string literals */
+typedef struct _usb_desc_utf16 {
+    usb_desc_header header;
+    char16_t unicode_string[];
+} usb_desc_utf16;
+#pragma pack()
+
+/* Turn an ordinary string literal into a UTF-16 one */
+#define XUSTR(s) u ## s
+#define USTR(s) XUSTR(s)
+#define USTRLEN(s) (2 * ((sizeof(s) - 1)))
+#define U16DESC(s)                                                          \
+    {                                                                       \
+        .header = {                                                         \
+            .bLength = sizeof(usb_desc_header) + USTRLEN(s),                \
+            .bDescriptorType = USB_DESCTYPE_STR                             \
+        },                                                                  \
+        /* Can't use designated initializer here because G++ complains */   \
+        USTR(s)                                                             \
+    }
+
+/* USB language ID Descriptor */
+static usb_desc_LANGID usbd_language_id_desc =
+{
+    .header =
+     {
+         .bLength         = sizeof(usb_desc_LANGID),
+         .bDescriptorType = USB_DESCTYPE_STR
+     },
+    .wLANGID              = ENG_LANGID
+};
+
+static usb_desc_utf16 mfcDesc = U16DESC(USB_MANUFACTURER);
+static usb_desc_utf16 prodDesc = U16DESC(USB_PRODUCT);
+
 /* USBD serial string */
 static usb_desc_str serialDesc = {
     .header = {
@@ -86,14 +111,10 @@ static usb_desc_str serialDesc = {
     .unicode_string = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 };
 
-/*
- * We need to keep the pointer for ‘STR_IDX_SERIAL’ because it’s
- * filled in by ‘usbd_init’.
- */
 static uint8_t* stringDescs[] = {
-    [STR_IDX_LANGID]  = nullptr,
-    [STR_IDX_MFC]     = nullptr,
-    [STR_IDX_PRODUCT] = nullptr,
+    [STR_IDX_LANGID]  = (uint8_t *)&usbd_language_id_desc,
+    [STR_IDX_MFC]     = (uint8_t *)&mfcDesc,
+    [STR_IDX_PRODUCT] = (uint8_t *)&prodDesc,
     [STR_IDX_SERIAL]  = (uint8_t *)&serialDesc
 };
 
@@ -850,10 +871,6 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
                     this->sendDeviceConfigDescriptor();
                     return;
                 }
-                if ((usbd->control.req.wValue >> 8) == USB_DESCTYPE_STR) {
-                    this->sendDeviceStringDescriptor();
-                    return;
-                }
             }
             // This calls into ClassCore for class descriptors
             reqstat = usbd_standard_request(usbd, &usbd->control.req);
@@ -947,53 +964,6 @@ void USBCore_::sendDeviceConfigDescriptor()
     // TODO: verify this sends ZLP properly when:
     //   wTotalLength % sizeof(this->buf) == 0
     this->flush(0);
-}
-
-void USBCore_::sendDeviceStringDescriptor()
-{
-    switch (lowByte(USBCore().usbDev().control.req.wValue)) {
-        case STR_IDX_LANGID: {
-            const usb_desc_LANGID desc = {
-                .header = {
-                    .bLength = sizeof(usb_desc_LANGID),
-                    .bDescriptorType = USB_DESCTYPE_STR
-                },
-                .wLANGID = ENG_LANGID
-            };
-            USBCore().sendControl(0 | TRANSFER_RELEASE, &desc, desc.header.bLength);
-            return;
-        }
-        case STR_IDX_MFC:
-            this->sendStringDesc(USB_MANUFACTURER);
-            break;
-        case STR_IDX_PRODUCT:
-            this->sendStringDesc(USB_PRODUCT);
-            break;
-        case STR_IDX_SERIAL:
-            USBCore().sendControl(0 | TRANSFER_RELEASE, &serialDesc, serialDesc.header.bLength);
-            break;
-        default:
-            USBCore().usbDev().drv_handler->ep_stall_set(&USBCore().usbDev(), 0);
-            return;
-    }
-}
-
-void USBCore_::sendStringDesc(const char *str)
-{
-    size_t len = sizeof(usb_desc_header) + strlen(str) * 2;
-    assert(len < 256);
-    usb_desc_header header = {
-        .bLength = (uint8_t)len,
-        .bDescriptorType = USB_DESCTYPE_STR
-    };
-
-    USBCore().sendControl(0, &header, sizeof(header));
-    for (size_t i = 0; i < strlen(str); i++) {
-        uint8_t zero = 0;
-        USBCore().sendControl(0, &str[i], sizeof(str[i]));
-        USBCore().sendControl(0, &zero, sizeof(zero));
-    }
-    USBCore().flush(0);
 }
 
 void USBCore_::sendZLP(usb_dev* usbd, uint8_t ep)
