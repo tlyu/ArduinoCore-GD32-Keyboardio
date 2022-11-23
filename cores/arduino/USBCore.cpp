@@ -564,7 +564,7 @@ int USBCore_::sendControl(uint8_t flags, const void* data, int len)
     }
 
     if (wrote != 0) {
-        this->controlWritten = true;
+        this->didCtlIn = true;
     }
 
     // Return ‘len’, rather than ‘wrote’, because PluggableUSB
@@ -599,6 +599,9 @@ int USBCore_::recvControl(void* data, int len)
         read += USBCore().usbDev().drv_handler->ep_read(d+read, 0, (uint8_t)EP_BUF_SNG);
     }
     assert(read == len);
+    if (len != 0) {
+        this->didCtlOut = true;
+    }
     return len;
 }
 
@@ -738,7 +741,11 @@ usb_dev& USBCore_::usbDev()
 void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
 {
     (void)ep;
-    this->controlWritten = false;
+    this->didCtlIn = false;
+    this->didCtlOut = false;
+    // Configure empty transactions for default
+    usb_transc_config(&usbd->transc_in[0], NULL, 0, 0);
+    usb_transc_config(&usbd->transc_out[0], NULL, 0, 0);
 
     usb_reqsta reqstat = REQ_NOTSUPP;
 
@@ -755,53 +762,25 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
         /* standard device request */
         case USB_REQTYPE_STRD:
             if (usbd->control.req.bRequest == USB_GET_DESCRIPTOR
-                && (usbd->control.req.bmRequestType & USB_RECPTYPE_MASK) == USB_RECPTYPE_DEV
-                && (usbd->control.req.wValue >> 8) == USB_DESCTYPE_CONFIG) {
-                this->sendDeviceConfigDescriptor();
-                return;
-            } else if (usbd->control.req.bRequest == USB_GET_DESCRIPTOR
-                       && (usbd->control.req.bmRequestType & USB_RECPTYPE_MASK) == USB_RECPTYPE_DEV
-                       && (usbd->control.req.wValue >> 8) == USB_DESCTYPE_STR) {
-                this->sendDeviceStringDescriptor();
-                return;
-            } else if ((usbd->control.req.bmRequestType & USB_RECPTYPE_MASK) == USB_RECPTYPE_ITF) {
-                reqstat = (usb_reqsta)ClassCore::reqProcess(usbd, &usbd->control.req);
-                if (reqstat == REQ_SUPP) {
-                    if ((usbd->control.req.bmRequestType & USB_TRX_IN) != USB_TRX_IN) {
-                        this->sendZLP(usbd, 0);
-                    } else if (!this->controlWritten) {
-                        // Send at least a ZLP if nothing was written, to avoid timeouts
-                        this->sendZLP(usbd, 0);
-                    }
-                } else {
-                    usbd_ep_stall(usbd, 0);
+                && (usbd->control.req.bmRequestType & USB_RECPTYPE_MASK) == USB_RECPTYPE_DEV) {
+                if ((usbd->control.req.wValue >> 8) == USB_DESCTYPE_CONFIG) {
+                    this->sendDeviceConfigDescriptor();
+                    return;
                 }
-                return;
-            } else {
-                reqstat = usbd_standard_request(usbd, &usbd->control.req);
+                if ((usbd->control.req.wValue >> 8) == USB_DESCTYPE_STR) {
+                    this->sendDeviceStringDescriptor();
+                    return;
+                }
             }
+            // This calls into ClassCore for class descriptors
+            reqstat = usbd_standard_request(usbd, &usbd->control.req);
             break;
 
         /* device class request */
         case USB_REQTYPE_CLASS:
             // Calls into class_core->req_process, does nothing else.
             reqstat = usbd_class_request(usbd, &usbd->control.req);
-
-            // Respond with a ZLP if the host has sent data,
-            // because we’ve already handled in in the class request.
-            if (reqstat == REQ_SUPP) {
-                if ((usbd->control.req.bmRequestType & USB_TRX_IN) != USB_TRX_IN) {
-                    this->sendZLP(usbd, 0);
-                } else if (!this->controlWritten) {
-                    // Send at least a ZLP if nothing was written, to avoid timeouts
-                    this->sendZLP(usbd, 0);
-                }
-            } else {
-                usbd_ep_stall(usbd, 0);
-            }
-            // Return early, because the usbd_ep_send() call below is for
-            // processing transmissions from the original low-level code.
-            return;
+            break;
 
         /* vendor defined request */
         case USB_REQTYPE_VENDOR:
@@ -813,28 +792,32 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
             break;
     }
 
-    if (reqstat == REQ_SUPP) {
-        if (usbd->control.req.wLength == 0) {
-            /* USB control transfer status in stage */
-            this->sendZLP(usbd, 0);
-        } else {
-            if (usbd->control.req.bmRequestType & USB_TRX_IN) {
-                usbd_ep_send(usbd, 0, usbd->transc_in[0].xfer_buf, usbd->transc_in[0].xfer_len);
-            } else {
-                /* USB control transfer data out stage */
-                this->sendZLP(usbd, 0);
-                // TODO: this is a vestige of the copy from GD’s
-                //source. Unfortunately, it runs afoul of pluggable
-                //usb’s assumptions where if there’s an OUT data
-                //stage, then it’s handled directly in ‘setup’ for the
-                //module, leaving only the status stage to be
-                //completed by the time we get here.
-                //
-                //usbd->drv_handler->ep_rx_enable(usbd, 0);
-            }
-        }
-    } else {
+    if (reqstat != REQ_SUPP) {
         usbd_ep_stall(usbd, 0);
+        return;
+    }
+    if (usbd->control.req.wLength == 0) {
+        /* USB control transfer status in stage */
+        this->sendZLP(usbd, 0);
+        return;
+    }
+    if (usbd->control.req.bmRequestType & USB_TRX_IN) {
+        if (!this->didCtlIn) {
+            // Low-level firmware configured IN buffer,
+            // or ZLP because PluggableUSB accepted but sent nothing
+            usbd_ep_send(usbd, 0, usbd->transc_in[0].xfer_buf, usbd->transc_in[0].xfer_len);
+        }
+        // Either way, _usb_in0_transc will take care of Status OUT
+    } else {
+        if (!this->didCtlOut) {
+            // Low-level firmware configured OUT buffer,
+            // or force a read because PluggableUSB accepted but read nothing
+            usbd->drv_handler->ep_rx_enable(usbd, 0);
+            // _usb_out0_transc will take care of Status IN
+        } else {
+            // Status IN after PluggableUSB did a read
+            this->sendZLP(usbd, 0);
+        }
     }
 }
 
