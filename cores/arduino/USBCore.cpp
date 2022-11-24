@@ -380,22 +380,48 @@ bool EPBuffers_<L, C>::pollEPStatus()
         if ((int_status & INTF_DIR) == INTF_DIR
             && (USBD_EPxCS(ep_num) & EPxCS_RX_ST) == EPxCS_RX_ST) {
 
+            if (USBD_EPxCS(ep_num) & EPxCS_SETUP) {
+                /*
+                 * We should abort a control transfer if we receive an
+                 * unexpected SETUP token, but unwinding all of that deeply
+                 * nested control flow is too error-prone.
+                 *
+                 * Also, we'd have to check whether the current flush is
+                 * part of a control transfer, or a non-control transfer,
+                 * so we can decide whether to abort the flush.
+                 */
+            }
             usb_transc *transc = &USBCore().usbDev().transc_out[ep_num];
             auto count = 0;
             if (transc->xfer_buf) {
                 count = USBCore().usbDev().drv_handler->ep_read(transc->xfer_buf, ep_num, (uint8_t)EP_BUF_SNG);
-                user_buffer_free(ep_num, (uint8_t)DBUF_EP_OUT);
                 transc->xfer_buf += count;
                 transc->xfer_count += count;
-                transc->xfer_len -= count;
             }
-
-            if ((transc->xfer_len == 0) || (count < transc->max_len)) {
+            if ((transc->xfer_count >= transc->xfer_len)
+                || (count < transc->max_len)) {
+                /*
+                 * This bypasses the low-level Setup Data OUT stage
+                 * completion handlers, because we might need to read more
+                 * than one packet.
+                 */
                 EPBuffers().buf(ep_num).transcOut();
+            } else {
+                /*
+                 * Low-level firmware does the following, which we won't
+                 * do, because we only ever configure the transc to read a
+                 * single packet at a time.
+                 */
+                // udev->drv_handler->ep_rx_enable(udev, ep_num);
             }
             USBD_EP_RX_ST_CLEAR(ep_num);
         } else if ((int_status & INTF_DIR) == 0
                    && (USBD_EPxCS(ep_num) & EPxCS_TX_ST) == EPxCS_TX_ST) {
+            /*
+             * This bypasses low-level Setup Data IN stage completion
+             * handlers, because we might need to write more than one
+             * packet.
+             */
             EPBuffers().buf(ep_num).transcIn();
             USBD_EP_TX_ST_CLEAR(ep_num);
         }
