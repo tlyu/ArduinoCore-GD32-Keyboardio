@@ -124,7 +124,11 @@ size_t EPBuffer<L>::push(const void *d, size_t len)
         *this->p++ = *d8++;
     }
     assert(this->p >= this->buf);
+    auto doflush = (this->sendSpace() == 0);
     usb_enable_interrupts();
+    if (doflush) {
+        this->flush();
+    }
     return w;
 }
 
@@ -633,9 +637,6 @@ int USBCore_::sendControl(uint8_t flags, const void* data, int len)
         d += w;
         wrote += w;
         this->maxWrite -= w;
-        if (this->sendSpace(0) == 0) {
-            this->flush(0);
-        }
     }
 
     if (flags & TRANSFER_RELEASE) {
@@ -749,10 +750,6 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
         }
         d += w;
         wrote += w;
-
-        if (this->sendSpace(ep) == 0) {
-            this->flush(ep);
-        }
     }
 
     if (flags & TRANSFER_RELEASE) {
