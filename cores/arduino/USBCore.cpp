@@ -104,6 +104,7 @@ usb_desc desc = {
     .strings     = stringDescs
 };
 
+// Must be called with interrupts disabled
 template<size_t L>
 void EPBuffer<L>::init(uint8_t ep)
 {
@@ -123,7 +124,11 @@ size_t EPBuffer<L>::push(const void *d, size_t len)
         *this->p++ = *d8++;
     }
     assert(this->p >= this->buf);
+    auto doflush = (this->sendSpace() == 0);
     usb_enable_interrupts();
+    if (doflush) {
+        this->flush();
+    }
     return w;
 }
 
@@ -145,6 +150,7 @@ size_t EPBuffer<L>::pop(void* d, size_t len)
     return r;
 }
 
+// Must be called with interrupts disabled
 template<size_t L>
 void EPBuffer<L>::reset()
 {
@@ -152,6 +158,7 @@ void EPBuffer<L>::reset()
     this->tail = this->buf;
 }
 
+// Must be called with interrupts disabled
 template<size_t L>
 size_t EPBuffer<L>::len()
 {
@@ -159,6 +166,7 @@ size_t EPBuffer<L>::len()
     return this->p - this->buf;
 }
 
+// Must be called with interrupts disabled
 template<size_t L>
 size_t EPBuffer<L>::available()
 {
@@ -166,6 +174,7 @@ size_t EPBuffer<L>::available()
     return this->tail - this->p;
 }
 
+// Must be called with interrupts disabled
 template<size_t L>
 size_t EPBuffer<L>::sendSpace()
 {
@@ -175,22 +184,25 @@ size_t EPBuffer<L>::sendSpace()
 template<size_t L>
 void EPBuffer<L>::flush()
 {
+    usb_disable_interrupts();
     // Don't flush an empty buffer
     if (this->len() == 0) {
+        usb_enable_interrupts();
         return;
     }
     /*
      * Bounce out if a flush is already occurring. This is only
      * possible when ‘flush’ is called from an interrupt, so the
      * check-and-set must be done with interrupts disabled.
+     *
+     * This flag is still necessary, because interrupts can get
+     * reenabled while waiting to transmit.
      */
-    usb_disable_interrupts();
     if (this->currentlyFlushing) {
         usb_enable_interrupts();
         return;
     }
     this->currentlyFlushing = true;
-    usb_enable_interrupts();
 
     // Only attempt to send if the device is configured enough.
     switch (USBCore().usbDev().cur_status) {
@@ -202,8 +214,13 @@ void EPBuffer<L>::flush()
     // fall through
     case USBD_CONFIGURED:
     case USBD_SUSPENDED: {
+        // This will temporarily reenable and disable interrupts
         auto canWrite = this->waitForWriteComplete();
         if (canWrite) {
+            // In case of an uncaught reset or configuration event
+            if (this->len() == 0) {
+                break;
+            }
             // Only start the next transmission if the device hasn't been
             // reset.
             this->txWaiting = true;
@@ -216,8 +233,10 @@ void EPBuffer<L>::flush()
     }
     this->reset();
     this->currentlyFlushing = false;
+    usb_enable_interrupts();
 }
 
+// Must be called with interrupts disabled
 template<size_t L>
 void EPBuffer<L>::enableOutEndpoint()
 {
@@ -232,6 +251,7 @@ void EPBuffer<L>::enableOutEndpoint()
     USBCore().usbDev().drv_handler->ep_rx_enable(&USBCore().usbDev(), this->ep);
 }
 
+// Must be called via ISR
 template<size_t L>
 void EPBuffer<L>::transcOut()
 {
@@ -239,12 +259,14 @@ void EPBuffer<L>::transcOut()
     this->rxWaiting = false;
 }
 
+// Must be called via ISR
 template<size_t L>
 void EPBuffer<L>::transcIn()
 {
     this->txWaiting = false;
 }
 
+// Unused?
 template<size_t L>
 uint8_t* EPBuffer<L>::ptr()
 {
@@ -253,6 +275,7 @@ uint8_t* EPBuffer<L>::ptr()
 
 // Busy loop until an OUT packet has been received. Returns ‘false’ if
 // the device has been reset.
+// Must be called via ISR
 template<size_t L>
 bool EPBuffer<L>::waitForReadComplete()
 {
@@ -270,12 +293,14 @@ bool EPBuffer<L>::waitForReadComplete()
 
 // Busy loop until the latest IN packet has been sent. Returns ‘true’
 // if a new packet can be queued when this call completes.
+// Must run with interrupts disabled, which will be temporarily reenabled
 template<size_t L>
 bool EPBuffer<L>::waitForWriteComplete()
 {
     // auto start = getCurrentMillis();
     auto ok = true;
     do {
+        usb_enable_interrupts();
         ok = EPBuffers().pollEPStatus();
         switch (USBCore().usbDev().cur_status) {
         case USBD_DEFAULT:
@@ -293,6 +318,7 @@ bool EPBuffer<L>::waitForWriteComplete()
         //     EPBuffers().buf(ep).transcIn();
         //     ok = false;
         // }
+        usb_disable_interrupts();
     } while (ok && this->txWaiting);
     return ok;
 }
@@ -358,22 +384,48 @@ bool EPBuffers_<L, C>::pollEPStatus()
         if ((int_status & INTF_DIR) == INTF_DIR
             && (USBD_EPxCS(ep_num) & EPxCS_RX_ST) == EPxCS_RX_ST) {
 
+            if (USBD_EPxCS(ep_num) & EPxCS_SETUP) {
+                /*
+                 * We should abort a control transfer if we receive an
+                 * unexpected SETUP token, but unwinding all of that deeply
+                 * nested control flow is too error-prone.
+                 *
+                 * Also, we'd have to check whether the current flush is
+                 * part of a control transfer, or a non-control transfer,
+                 * so we can decide whether to abort the flush.
+                 */
+            }
             usb_transc *transc = &USBCore().usbDev().transc_out[ep_num];
             auto count = 0;
             if (transc->xfer_buf) {
                 count = USBCore().usbDev().drv_handler->ep_read(transc->xfer_buf, ep_num, (uint8_t)EP_BUF_SNG);
-                user_buffer_free(ep_num, (uint8_t)DBUF_EP_OUT);
                 transc->xfer_buf += count;
                 transc->xfer_count += count;
-                transc->xfer_len -= count;
             }
-
-            if ((transc->xfer_len == 0) || (count < transc->max_len)) {
+            if ((transc->xfer_count >= transc->xfer_len)
+                || (count < transc->max_len)) {
+                /*
+                 * This bypasses the low-level Setup Data OUT stage
+                 * completion handlers, because we might need to read more
+                 * than one packet.
+                 */
                 EPBuffers().buf(ep_num).transcOut();
+            } else {
+                /*
+                 * Low-level firmware does the following, which we won't
+                 * do, because we only ever configure the transc to read a
+                 * single packet at a time.
+                 */
+                // udev->drv_handler->ep_rx_enable(udev, ep_num);
             }
             USBD_EP_RX_ST_CLEAR(ep_num);
         } else if ((int_status & INTF_DIR) == 0
                    && (USBD_EPxCS(ep_num) & EPxCS_TX_ST) == EPxCS_TX_ST) {
+            /*
+             * This bypasses low-level Setup Data IN stage completion
+             * handlers, because we might need to write more than one
+             * packet.
+             */
             EPBuffers().buf(ep_num).transcIn();
             USBD_EP_TX_ST_CLEAR(ep_num);
         }
@@ -568,6 +620,7 @@ void USBCore_::disconnect()
 // Send ‘len’ octets of ‘d’ through the control pipe (endpoint 0).
 // Blocks until ‘len’ octets are sent. Returns the number of octets
 // sent, or -1 on error.
+// Must be called via ISR
 int USBCore_::sendControl(uint8_t flags, const void* data, int len)
 {
     uint8_t* d = (uint8_t*)data;
@@ -584,9 +637,6 @@ int USBCore_::sendControl(uint8_t flags, const void* data, int len)
         d += w;
         wrote += w;
         this->maxWrite -= w;
-        if (this->sendSpace(0) == 0) {
-            this->flush(0);
-        }
     }
 
     if (flags & TRANSFER_RELEASE) {
@@ -614,6 +664,7 @@ int USBCore_::sendControl(uint8_t flags, const void* data, int len)
 // This method reads directly into ‘data’ from the peripheral's
 // endpoint buffer, because the control endpoint is bi-directional,
 // but ‘EPBuffer’ only allows for one direction at a time.
+// Must be called via ISR
 int USBCore_::recvControl(void* data, int len)
 {
     uint8_t* d = (uint8_t*)data;
@@ -647,13 +698,19 @@ int USBCore_::recvControlLong(void* data, int len)
 // Number of octets available on OUT endpoint.
 uint8_t USBCore_::available(uint8_t ep)
 {
-    return EPBuffers().buf(ep).available();
+    usb_disable_interrupts();
+    auto r =  EPBuffers().buf(ep).available();
+    usb_enable_interrupts();
+    return r;
 }
 
 // Space left in IN endpoint buffer.
 uint8_t USBCore_::sendSpace(uint8_t ep)
 {
-    return EPBuffers().buf(ep).sendSpace();
+    usb_disable_interrupts();
+    auto r = EPBuffers().buf(ep).sendSpace();
+    usb_enable_interrupts();
+    return r;
 }
 
 // Blocking send of data to an endpoint. Returns the number of octets
@@ -693,10 +750,6 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
         }
         d += w;
         wrote += w;
-
-        if (this->sendSpace(ep) == 0) {
-            this->flush(ep);
-        }
     }
 
     if (flags & TRANSFER_RELEASE) {
