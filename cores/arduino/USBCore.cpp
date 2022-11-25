@@ -120,7 +120,7 @@ static uint8_t* stringDescs[] = {
 
 usb_desc desc = {
     .dev_desc    = (uint8_t *)&devDesc,
-    .config_desc = (uint8_t *)&configDesc,
+    .config_desc = nullptr,
     .bos_desc    = nullptr,
     .strings     = stringDescs
 };
@@ -440,6 +440,7 @@ class ClassCore
 
             // Stash setup contents for later use by ctlOut
             memcpy(&setup, req, sizeof(setup));
+            USBCore().setupClass(req->wLength);
             if (setup.bRequest == USB_GET_DESCRIPTOR) {
                 auto sent = PluggableUSB().getDescriptor(setup);
                 if (sent > 0) {
@@ -628,12 +629,20 @@ void USBCore_::logStatus(const char *status)
 
 void USBCore_::connect()
 {
+    USBCore().buildDeviceConfigDescriptor();
     usb_connect();
 }
 
 void USBCore_::disconnect()
 {
     usb_disconnect();
+}
+
+void USBCore_::setupClass(uint16_t wLength)
+{
+    this->ctlIdx = 0;
+    this->ctlOutLen = 0;
+    this->maxWrite = wLength;
 }
 
 // Send ‘len’ octets of ‘d’ through the control pipe (endpoint 0).
@@ -840,85 +849,15 @@ usb_dev& USBCore_::usbDev()
     return usbd;
 }
 
-/*
- * TODO: This is a heck of a monkey patch that just seems to get more
- * fragile every time functionality is needed in the rest of the
- * Arduino core.
- *
- * It was initially intended to try and use as much of the firmware
- * library’s code as possible, but it’s just not a good fit, and
- * should probably be scrapped and started again now that more of its
- * scope is known.
- */
+/* Log the raw Setup stage data packet */
 void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
 {
-    (void)ep;
-    this->ctlIdx = 0;
-    this->ctlOutLen = 0;
-    // Configure empty transactions for default
-    usb_transc_config(&usbd->transc_in[0], NULL, 0, 0);
-    usb_transc_config(&usbd->transc_out[0], NULL, 0, 0);
+    USBCore().logEP(':', ep, '^', USB_SETUP_PACKET_LEN);
+    auto count = usbd->drv_handler->ep_read((uint8_t *)(&usbd->control.req), 0, (uint8_t)EP_BUF_SNG);
+    USBCore().hexDump('^', (uint8_t *)&usbd->control.req, count);
 
-    usb_reqsta reqstat = REQ_NOTSUPP;
-
-    uint16_t count = usbd->drv_handler->ep_read((uint8_t *)(&usbd->control.req), 0, (uint8_t)EP_BUF_SNG);
-
-    if (count != USB_SETUP_PACKET_LEN) {
-        usbd_ep_stall(usbd, 0);
-
-        return;
-    }
-
-    USBCore().hexDump('^', (uint8_t *)&usbd->control.req, 8);
-
-    this->maxWrite = usbd->control.req.wLength;
-    switch (usbd->control.req.bmRequestType & USB_REQTYPE_MASK) {
-        /* standard device request */
-        case USB_REQTYPE_STRD:
-            if (usbd->control.req.bRequest == USB_GET_DESCRIPTOR
-                && (usbd->control.req.bmRequestType & USB_RECPTYPE_MASK) == USB_RECPTYPE_DEV) {
-                if ((usbd->control.req.wValue >> 8) == USB_DESCTYPE_CONFIG) {
-                    this->sendDeviceConfigDescriptor();
-                    reqstat = REQ_SUPP;
-                    break;
-                }
-            }
-            // This calls into ClassCore for class descriptors
-            reqstat = usbd_standard_request(usbd, &usbd->control.req);
-            break;
-
-        /* device class request */
-        case USB_REQTYPE_CLASS:
-            // Calls into class_core->req_process, does nothing else.
-            reqstat = usbd_class_request(usbd, &usbd->control.req);
-            break;
-
-        /* vendor defined request */
-        case USB_REQTYPE_VENDOR:
-            // Does nothing.
-            reqstat = usbd_vendor_request(usbd, &usbd->control.req);
-            break;
-
-        default:
-            break;
-    }
-
-    if (reqstat != REQ_SUPP) {
-        usbd_ep_stall(usbd, 0);
-        return;
-    }
-    if (usbd->control.req.wLength == 0) {
-        /* USB control transfer status in stage */
-        this->sendZLP(usbd, 0);
-        return;
-    }
-    if (usbd->control.req.bmRequestType & USB_TRX_IN) {
-        usbd_ep_send(usbd, 0, usbd->transc_in[0].xfer_buf, usbd->transc_in[0].xfer_len);
-        // _usb_in0_transc will take care of Status OUT
-    } else {
-        usbd->drv_handler->ep_rx_enable(usbd, 0);
-        // _usb_out0_transc will take care of Status IN
-    }
+    this->oldTranscSetup(usbd, ep);
+    USBCore().logEP('.', ep, '^', USB_SETUP_PACKET_LEN);
 }
 
 // Called in interrupt context.
@@ -926,10 +865,16 @@ void USBCore_::transcOut(usb_dev* usbd, uint8_t ep)
 {
     auto transc = &usbd->transc_out[ep];
     auto count = transc->xfer_count;
-    EPBuffers().buf(ep).transcOut();
     USBCore().logEP(':', ep, '<', count);
     if (ep == 0) {
+        if (usbd->control.ctl_state == USBD_CTL_STATUS_OUT && count != 0) {
+            uint8_t buf[USBD_EP0_MAX_SIZE];
+            uint8_t count = usbd->drv_handler->ep_read(buf, 0U, EP_BUF_SNG);
+            USBCore().hexDump('!', buf, count);
+        }
         this->oldTranscOut(usbd, ep);
+    } else {
+        EPBuffers().buf(ep).transcOut();
     }
     USBCore().logEP('.', ep, '<', count);
 }
@@ -939,9 +884,10 @@ void USBCore_::transcIn(usb_dev* usbd, uint8_t ep)
 {
     auto transc = &usbd->transc_in[ep];
     USBCore().logEP(':', ep, '>', transc->xfer_count);
-    EPBuffers().buf(ep).transcIn();
-     if (ep == 0) {
+    if (ep == 0) {
         this->oldTranscIn(usbd, ep);
+    } else {
+        EPBuffers().buf(ep).transcIn();
     }
     if (usbd->control.ctl_state != USBD_CTL_STATUS_OUT) {
         USBCore().logEP('.', ep, '>', transc->xfer_count);
@@ -949,9 +895,9 @@ void USBCore_::transcIn(usb_dev* usbd, uint8_t ep)
     transc->xfer_count = 0;
 }
 
-void USBCore_::sendDeviceConfigDescriptor()
+void USBCore_::buildDeviceConfigDescriptor()
 {
-    auto oldMaxWrite = this->maxWrite;
+    this->ctlIdx = 0;
     this->maxWrite = 0;
     uint8_t interfaceCount = 0;
     uint16_t len = 0;
@@ -963,7 +909,7 @@ void USBCore_::sendDeviceConfigDescriptor()
 
     configDesc.wTotalLength = sizeof(configDesc) + len;
     configDesc.bNumInterfaces = interfaceCount;
-    this->maxWrite = oldMaxWrite;
+    this->maxWrite = USBCORE_CTL_BUFSZ;
     this->ctlIdx = 0;
     this->sendControl(0, &configDesc, sizeof(configDesc));
     interfaceCount = 0;
@@ -972,9 +918,8 @@ void USBCore_::sendDeviceConfigDescriptor()
     CDCACM().getInterface();
 #endif
     PluggableUSB().getInterface(&interfaceCount);
-    // TODO: verify this sends ZLP properly when:
-    //   wTotalLength % sizeof(this->buf) == 0
-    this->flush(0);
+    memcpy(this->cfgDesc, this->ctlBuf, this->ctlIdx);
+    USBCore().usbDev().desc->config_desc = this->cfgDesc;
 }
 
 void USBCore_::sendZLP(usb_dev* usbd, uint8_t ep)

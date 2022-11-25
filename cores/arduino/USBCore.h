@@ -176,6 +176,7 @@ class USBCore_
         void setResetHook(void (*hook)());
 
         uint8_t setupCtlOut(usb_req* req);
+        void setupClass(uint16_t wLength);
         void ctlOut(usb_dev* udev);
 
         void logEP(char kind, uint8_t ep, char dir, size_t len);
@@ -217,6 +218,8 @@ class USBCore_
         // Transfer size for setCtlOutDest
         size_t ctlOutLen;
 
+        uint8_t cfgDesc[USBCORE_CTL_BUFSZ];
+
         /*
          * Pointers to the transaction routines specified by ‘usbd_init’.
          */
@@ -228,7 +231,7 @@ class USBCore_
         void transcOut(usb_dev* usbd, uint8_t ep);
         void transcIn(usb_dev* usbd, uint8_t ep);
 
-        void sendDeviceConfigDescriptor();
+        void buildDeviceConfigDescriptor();
 
         void sendZLP(usb_dev* usbd, uint8_t ep);
 };
