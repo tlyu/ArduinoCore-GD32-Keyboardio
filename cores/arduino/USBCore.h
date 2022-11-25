@@ -83,10 +83,6 @@ class EPBuffer
         void transcOut();
 
         /*
-         * Busy loop until the endpoint has a packet available.
-         */
-        bool waitForReadComplete();
-        /*
          * Busy loop until the endpoint has finished its current
          * transmission.
          */
@@ -132,8 +128,6 @@ class EPBuffers_
 
         static EPDesc* desc(uint8_t ep);
 
-        bool pollEPStatus();
-
     private:
         EPBuffer<L> epBufs[C];
 };
@@ -162,6 +156,7 @@ class USBCore_
         int recv(uint8_t ep);
         int flush(uint8_t ep);
 
+        void setupClass(uint16_t wLength);
         void ctlOut(usb_dev* udev);
 
         void logEP(char kind, uint8_t ep, char dir, size_t len);
@@ -199,6 +194,8 @@ class USBCore_
         // Transfer size for recvControl
         size_t ctlOutLen;
 
+        uint8_t cfgDesc[CTL_BUFSZ];
+
         /*
          * Pointers to the transaction routines specified by ‘usbd_init’.
          */
@@ -210,7 +207,7 @@ class USBCore_
         void transcOut(usb_dev* usbd, uint8_t ep);
         void transcIn(usb_dev* usbd, uint8_t ep);
 
-        void sendDeviceConfigDescriptor();
+        void buildDeviceConfigDescriptor();
 
         void sendZLP(usb_dev* usbd, uint8_t ep);
 };
