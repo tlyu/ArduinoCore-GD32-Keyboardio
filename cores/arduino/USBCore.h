@@ -162,6 +162,7 @@ class USBCore_
         int recv(uint8_t ep);
         int flush(uint8_t ep);
 
+        void ctlOut(usb_dev* udev);
         /*
          * Static member function helpers called from ISR.
          *
@@ -183,14 +184,16 @@ class USBCore_
         // TODO: verify that this only applies to the control endpoint’s use of wLength
         // I think this is only on the setup packet, so it should be fine.
         uint16_t maxWrite = 0;
-        // Has there been a recvControl (Data OUT) on this control transfer?
-        bool didCtlOut;
 
         // Fixed size buffer for control transfers. Adjust per-application.
         constexpr static size_t CTL_BUFSZ = 256;
         uint8_t ctlBuf[CTL_BUFSZ];
         // Next index in ctlBuf to be written to
         size_t ctlIdx;
+        // Destination buffer for recvControl (Data OUT)
+        uint8_t *ctlOutBuf;
+        // Transfer size for recvControl
+        size_t ctlOutLen;
 
         /*
          * Pointers to the transaction routines specified by ‘usbd_init’.
