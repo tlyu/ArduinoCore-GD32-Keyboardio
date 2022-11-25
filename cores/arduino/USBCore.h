@@ -8,6 +8,16 @@ extern "C" {
 }
 
 /*
+ * Default size of fixed-size control transfer buffer. Application can
+ * redefine at compile time. This is set to 255 due to a bug in the
+ * vendor firmware that only reads a single byte for config descriptor
+ * set total length.
+ */
+#ifndef USBCORE_CTL_BUFSZ
+#define USBCORE_CTL_BUFSZ 255
+#endif
+
+/*
  * Descriptor for storing an endpoint’s direction, type, and max
  * packet length.
  */
@@ -185,10 +195,13 @@ class USBCore_
         // TODO: verify that this only applies to the control endpoint’s use of wLength
         // I think this is only on the setup packet, so it should be fine.
         uint16_t maxWrite = 0;
-        // Has there been a sendControl (Data IN) on this control transfer?
-        bool didCtlIn;
         // Has there been a recvControl (Data OUT) on this control transfer?
         bool didCtlOut;
+
+        // Fixed size buffer for control transfers
+        uint8_t ctlBuf[USBCORE_CTL_BUFSZ];
+        // Next index in ctlBuf to be written to
+        size_t ctlIdx;
 
         /*
          * Pointers to the transaction routines specified by ‘usbd_init’.

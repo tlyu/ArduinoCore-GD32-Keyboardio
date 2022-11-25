@@ -326,12 +326,8 @@ bool EPBuffer<L>::waitForWriteComplete()
         switch (USBCore().usbDev().cur_status) {
         case USBD_DEFAULT:
         case USBD_ADDRESSED:
-            // For non-EP0, abort if no longer configured
-            if (ep != 0) {
-                ok = false;
-                break;
-            }
-        // fall through
+            ok = false;
+            break;
         default:
             break;
         }
@@ -648,33 +644,31 @@ void USBCore_::disconnect()
 }
 
 // Send ‘len’ octets of ‘d’ through the control pipe (endpoint 0).
-// Blocks until ‘len’ octets are sent. Returns the number of octets
-// sent, or -1 on error.
-// Must be called via ISR
+// Configures the low-level API's transfer buffer if TRANSFER_RELEASE
+// is set, or when flushed.
+//
+// Limitations: There is a fixed maximum buffer size of USBCORE_CTL_BUFSZ,
+// which must be adjusted per-application, in an attempt to avoid dynamic
+// allocation.
+//
+// Returns the number of octets sent, or -1 on error.
+//
+// Must be called via ISR, or when the endpoint isn't in VALID status.
 int USBCore_::sendControl(uint8_t flags, const void* data, int len)
 {
     uint8_t* d = (uint8_t*)data;
+    auto usbd = &USBCore().usbDev();
     auto l = min(len, this->maxWrite);
-    auto wrote = 0;
-    while (wrote < l) {
-        auto w = 0;
-        if (flags & TRANSFER_ZERO) {
-            constexpr uint8_t zero = 0;
-            w = EPBuffers().buf(0).push(&zero, 1);
-        } else {
-            w = EPBuffers().buf(0).push(d, l - wrote);
-        }
-        d += w;
-        wrote += w;
-        this->maxWrite -= w;
+    assert(l <= USBCORE_CTL_BUFSZ - this->ctlIdx);
+    if (flags & TRANSFER_ZERO) {
+        memset(&this->ctlBuf[this->ctlIdx], 0, l);
+    } else {
+        memcpy(&this->ctlBuf[this->ctlIdx], data, l);
     }
-
-    if (flags & TRANSFER_RELEASE) {
-        this->flush(0);
-    }
-
-    if (wrote != 0) {
-        this->didCtlIn = true;
+    ctlIdx += l;
+    this->maxWrite -= l;
+    if ((l != 0) && (flags & TRANSFER_RELEASE)) {
+        USBCore().flush(0);
     }
 
     // Return ‘len’, rather than ‘wrote’, because PluggableUSB
@@ -814,7 +808,13 @@ int USBCore_::recv(uint8_t ep)
 // Flushes an outbound transmission as soon as possible.
 int USBCore_::flush(uint8_t ep)
 {
-    EPBuffers().buf(ep).flush();
+    if (ep == 0) {
+        auto usbd = &USBCore().usbDev();
+        usbd->transc_in[0].xfer_buf = ctlBuf;
+        usbd->transc_in[0].xfer_len = ctlIdx;
+    } else {
+        EPBuffers().buf(ep).flush();
+    }
     return 0;
 }
 
@@ -854,8 +854,8 @@ usb_dev& USBCore_::usbDev()
 void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
 {
     (void)ep;
-    this->didCtlIn = false;
     this->didCtlOut = false;
+    this->ctlIdx = 0;
     // Configure empty transactions for default
     usb_transc_config(&usbd->transc_in[0], NULL, 0, 0);
     usb_transc_config(&usbd->transc_out[0], NULL, 0, 0);
@@ -878,7 +878,8 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
                 && (usbd->control.req.bmRequestType & USB_RECPTYPE_MASK) == USB_RECPTYPE_DEV) {
                 if ((usbd->control.req.wValue >> 8) == USB_DESCTYPE_CONFIG) {
                     this->sendDeviceConfigDescriptor();
-                    return;
+                    reqstat = REQ_SUPP;
+                    break;
                 }
             }
             // This calls into ClassCore for class descriptors
@@ -911,12 +912,8 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
         return;
     }
     if (usbd->control.req.bmRequestType & USB_TRX_IN) {
-        if (!this->didCtlIn) {
-            // Low-level firmware configured IN buffer,
-            // or ZLP because PluggableUSB accepted but sent nothing
-            usbd_ep_send(usbd, 0, usbd->transc_in[0].xfer_buf, usbd->transc_in[0].xfer_len);
-        }
-        // Either way, _usb_in0_transc will take care of Status OUT
+        usbd_ep_send(usbd, 0, usbd->transc_in[0].xfer_buf, usbd->transc_in[0].xfer_len);
+        // _usb_in0_transc will take care of Status OUT
     } else {
         if (!this->didCtlOut) {
             // Low-level firmware configured OUT buffer,
@@ -963,6 +960,7 @@ void USBCore_::sendDeviceConfigDescriptor()
     configDesc.wTotalLength = sizeof(configDesc) + len;
     configDesc.bNumInterfaces = interfaceCount;
     this->maxWrite = oldMaxWrite;
+    this->ctlIdx = 0;
     this->sendControl(0, &configDesc, sizeof(configDesc));
     interfaceCount = 0;
 #ifdef USBD_USE_CDC
