@@ -821,9 +821,8 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
 {
     (void)ep;
     Serial1.println((uint16_t)USBD_EPxCS(0), 16);
-    auto count = usbd->drv_handler->ep_read((uint8_t *)(&usbd->control.req), 0, (uint8_t)EP_BUF_SNG);
 
-    USBCore().hexDump('^', (uint8_t *)&usbd->control.req, count);
+    USBCore().hexDump('^', (uint8_t *)&usbd->control.req, USB_SETUP_PACKET_LEN);
 
     this->oldTranscSetup(usbd, ep);
 }

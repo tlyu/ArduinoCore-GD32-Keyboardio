@@ -56,13 +56,8 @@ void _usb_setup_transc (usb_dev *udev, uint8_t ep_num)
 
     usb_reqsta reqstat = REQ_NOTSUPP;
 
-    uint16_t count = udev->drv_handler->ep_read((uint8_t *)(&udev->control.req), 0U, (uint8_t)EP_BUF_SNG);
-
-    if (count != USB_SETUP_PACKET_LEN) {
-        usb_stall_transc(udev);
-
-        return;
-    }
+    /* Force to IDLE state, to cancel actions by any pending completion handlers. */
+    udev->control.ctl_state = USBD_CTL_IDLE;
 
     switch (udev->control.req.bmRequestType & USB_REQTYPE_MASK) {
     /* standard device request */
