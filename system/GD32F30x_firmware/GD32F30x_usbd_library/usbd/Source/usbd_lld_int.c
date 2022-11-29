@@ -118,11 +118,21 @@ void usbd_isr (void)
                 /* handle the USB OUT direction transaction */
                 if (USBD_EPxCS(ep_num) & EPxCS_RX_ST) {
                     /* clear successful receive interrupt flag */
-                    USBD_EP_RX_ST_CLEAR(ep_num);
+                    if (0U != ep_num) {
+                        USBD_EP_RX_ST_CLEAR(ep_num);
+                    }
 
                     if (USBD_EPxCS(ep_num) & EPxCS_SETUP) {
 
                         if (0U == ep_num) {
+                            uint16_t count = udev->drv_handler->ep_read((uint8_t *)(&udev->control.req), 0U, (uint8_t)EP_BUF_SNG);
+
+                            USBD_EP_RX_ST_CLEAR(ep_num);
+                            if (count != USB_SETUP_PACKET_LEN) {
+                                usb_stall_transc(udev);
+
+                                return;
+                            }
                             udev->ep_transc[ep_num][TRANSC_SETUP](udev, ep_num);
                         } else {
                             return;
@@ -131,6 +141,10 @@ void usbd_isr (void)
                         usb_transc *transc = &udev->transc_out[ep_num];
 
                         uint16_t count = udev->drv_handler->ep_read (transc->xfer_buf, ep_num, (uint8_t)EP_BUF_SNG);
+
+                        if (0U == ep_num) {
+                            USBD_EP_RX_ST_CLEAR(ep_num);
+                        }
 
                         transc->xfer_buf += count;
                         transc->xfer_count += count;

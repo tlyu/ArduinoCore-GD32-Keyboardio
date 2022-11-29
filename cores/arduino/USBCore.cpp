@@ -857,8 +857,7 @@ usb_dev& USBCore_::usbDev()
 void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
 {
     USBCore().logEP(':', ep, '^', USB_SETUP_PACKET_LEN);
-    auto count = usbd->drv_handler->ep_read((uint8_t *)(&usbd->control.req), 0, (uint8_t)EP_BUF_SNG);
-    USBCore().hexDump('^', (uint8_t *)&usbd->control.req, count);
+    USBCore().hexDump('^', (uint8_t *)&usbd->control.req, USB_SETUP_PACKET_LEN);
 
     this->oldTranscSetup(usbd, ep);
     USBCore().logEP('.', ep, '^', USB_SETUP_PACKET_LEN);
