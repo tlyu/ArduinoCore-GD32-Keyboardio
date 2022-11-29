@@ -117,12 +117,37 @@ void usbd_isr (void)
             if (int_status & INTF_DIR) {
                 /* handle the USB OUT direction transaction */
                 if (USBD_EPxCS(ep_num) & EPxCS_RX_ST) {
+                    /*
+                     * bugfix: delay clearing RX_ST on EP0 to avoid losing a
+                     * SETUP notification. If RX_ST is cleared, it appears that
+                     * a token packet can change the SETUP flag, even if the
+                     * peripheral responds with a NAK. While RX_ST is set, the
+                     * SETUP flag is "frozen" and won't change. (This is not
+                     * officially documented.)
+                     */
                     /* clear successful receive interrupt flag */
-                    USBD_EP_RX_ST_CLEAR(ep_num);
+                    if (0U != ep_num) {
+                        USBD_EP_RX_ST_CLEAR(ep_num);
+                    }
 
                     if (USBD_EPxCS(ep_num) & EPxCS_SETUP) {
 
                         if (0U == ep_num) {
+                            /*
+                             * bugfix: clear RX_ST after reading the packet.
+                             * Also, read the packet in the ISR, instead of
+                             * in the transc handler. This makes it easier for
+                             * the application to wrap the transc handler
+                             * without causing timing problems.
+                             */
+                            uint16_t count = udev->drv_handler->ep_read((uint8_t *)(&udev->control.req), 0U, (uint8_t)EP_BUF_SNG);
+
+                            USBD_EP_RX_ST_CLEAR(ep_num);
+                            if (count != USB_SETUP_PACKET_LEN) {
+                                usb_stall_transc(udev);
+
+                                return;
+                            }
                             udev->ep_transc[ep_num][TRANSC_SETUP](udev, ep_num);
                         } else {
                             return;
@@ -131,6 +156,11 @@ void usbd_isr (void)
                         usb_transc *transc = &udev->transc_out[ep_num];
 
                         uint16_t count = udev->drv_handler->ep_read (transc->xfer_buf, ep_num, (uint8_t)EP_BUF_SNG);
+
+                        /* bugfix: clear RX_ST after reading the packet */
+                        if (0U == ep_num) {
+                            USBD_EP_RX_ST_CLEAR(ep_num);
+                        }
 
                         transc->xfer_buf += count;
                         transc->xfer_count += count;
