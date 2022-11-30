@@ -175,6 +175,12 @@ class USBCore_
         int flush(uint8_t ep);
         void setResetHook(void (*hook)());
 
+        // Debug counters
+        volatile uint16_t nreset;
+        volatile uint16_t nsusp;
+        volatile uint16_t nresume;
+        volatile uint16_t nerror;
+
         uint8_t setupCtlOut(usb_req* req);
         void setupClass(uint16_t wLength);
         void ctlOut(usb_dev* udev);
