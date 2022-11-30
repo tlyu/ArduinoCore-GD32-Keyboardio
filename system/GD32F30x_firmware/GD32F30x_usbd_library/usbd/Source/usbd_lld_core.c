@@ -419,7 +419,7 @@ static void usbd_ep_stall_clear (usb_dev *udev, uint8_t ep_addr)
             udev->transc_in[ep_num].ep_stall = 0U;
 
             /* clear endpoint stall status */
-            USBD_EP_TX_STAT_SET(ep_num, EPTX_VALID);
+            USBD_EP_TX_STAT_SET(ep_num, EPTX_NAK);
         }
     } else {
         /* don't change status of a disabled endpoint */
@@ -430,7 +430,7 @@ static void usbd_ep_stall_clear (usb_dev *udev, uint8_t ep_addr)
             udev->transc_out[ep_num].ep_stall = 0U;
 
             /* clear endpoint stall status */
-            USBD_EP_RX_STAT_SET(ep_num, EPRX_VALID);
+            USBD_EP_RX_STAT_SET(ep_num, EPRX_NAK);
         }
     }
 }
