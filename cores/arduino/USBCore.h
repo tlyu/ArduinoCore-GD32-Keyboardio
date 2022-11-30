@@ -163,6 +163,10 @@ class USBCore_
         int flush(uint8_t ep);
 
         void ctlOut(usb_dev* udev);
+
+        void logEP(char kind, uint8_t ep, char dir, size_t len);
+        void hexDump(char prefix, const uint8_t *buf, size_t len);
+        void logStatus(const char *status);
         /*
          * Static member function helpers called from ISR.
          *
