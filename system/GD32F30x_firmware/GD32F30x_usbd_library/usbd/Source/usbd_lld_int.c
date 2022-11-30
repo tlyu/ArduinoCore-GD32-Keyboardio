@@ -129,6 +129,7 @@ void usbd_isr (void)
 
                             USBD_EP_RX_ST_CLEAR(ep_num);
                             if (count != USB_SETUP_PACKET_LEN) {
+                                udev->drv_handler->setup_err(count);
                                 usb_stall_transc(udev);
 
                                 return;
@@ -178,6 +179,10 @@ void usbd_isr (void)
         }
     }
 
+    if (INTF_ERRIF & int_flag) {
+        udev->drv_handler->err();
+        CLR(ERRIF);
+    }
     if (INTF_WKUPIF & int_flag) {
         /* restore the old cur_status */
         udev->cur_status = udev->backup_status;
