@@ -224,6 +224,7 @@ void EPBuffer<L>::flush()
         return;
     }
     this->currentlyFlushing = true;
+    USBCore().logEP('_', this->ep, '>', this->len());
 
     // Only attempt to send if the device is configured enough.
     switch (USBCore().usbDev().cur_status) {
@@ -245,7 +246,8 @@ void EPBuffer<L>::flush()
             // Only start the next transmission if the device hasn't been
             // reset.
             this->txWaiting = true;
-            USBCore().usbDev().drv_handler->ep_write((uint8_t*)this->buf, this->ep, this->len());
+            usbd_ep_send(&USBCore().usbDev(), this->ep, (uint8_t *)this->buf, this->len());
+            USBCore().logEP('>', this->ep, '>', this->len());
         }
         break;
     }
@@ -433,6 +435,7 @@ class ClassCore
         // Called when ep0 gets a SETUP packet after configuration.
         static uint8_t reqProcess(usb_dev* usbd, usb_req* req)
         {
+            USBCore().logStatus("ClassCore");
             (void)usbd;
 
             // Stash setup contents for later use by ctlOut
@@ -527,6 +530,7 @@ static void (*resetHook)();
 void (*oldResetHandler)(usb_dev *usbd);
 void handleReset(usb_dev *usbd)
 {
+    USBCore().logStatus("Reset");
     EPBuffers().init();
     if (resetHook) {
         resetHook();
@@ -539,8 +543,27 @@ void USBCore_::setResetHook(void (*hook)())
     resetHook = hook;
 }
 
+void (*oldSuspendHandler)();
+void handleSuspend()
+{
+    USBCore().logStatus("Suspend");
+    oldSuspendHandler();
+}
+
+void (*oldResumeHandler)();
+void handleResume()
+{
+    usb_disable_interrupts();
+    USBCore().logStatus("Resume");
+    usb_enable_interrupts();
+    oldResumeHandler();
+}
+
 USBCore_::USBCore_()
 {
+#ifdef USBCORE_TRACE
+    Serial1.begin(USBCORE_TRACE_SPEED);
+#endif
     /*
      * Use global ‘usbd’ here, instead of wrapped version, to avoid
      * initialization loop.
@@ -551,6 +574,12 @@ USBCore_::USBCore_()
     oldResetHandler = usbd.drv_handler->ep_reset;
     usbd.drv_handler->ep_reset = handleReset;
 
+    oldSuspendHandler = usbd.drv_handler->suspend;
+    usbd.drv_handler->suspend = handleSuspend;
+
+    oldResumeHandler = usbd.drv_handler->suspend_leave;
+    usbd.drv_handler->suspend_leave = handleResume;
+
     this->oldTranscSetup = usbd.ep_transc[0][TRANSC_SETUP];
     usbd.ep_transc[0][TRANSC_SETUP] = USBCore_::transcSetupHelper;
 
@@ -559,6 +588,42 @@ USBCore_::USBCore_()
 
     this->oldTranscIn = usbd.ep_transc[0][TRANSC_IN];
     usbd.ep_transc[0][TRANSC_IN] = USBCore_::transcInHelper;
+}
+
+void USBCore_::logEP(char kind, uint8_t ep, char dir, size_t len)
+{
+#ifdef USBCORE_TRACE
+    Serial1.print(USBD_EPxCS(ep), 16);
+    Serial1.print(kind);
+    Serial1.print(ep);
+    Serial1.print(dir);
+    Serial1.print(len);
+    Serial1.print(' ');
+    Serial1.println(USBD_EPxCS(ep), 16);
+    Serial1.flush();
+#endif
+}
+
+void USBCore_::hexDump(char prefix, const uint8_t *buf, size_t len)
+{
+#ifdef USBCORE_TRACE
+    Serial1.print(prefix);
+    for (size_t i = 0; i < len; i++) {
+        Serial1.print(buf[i] >> 4, 16);
+        Serial1.print((buf[i] & 0x0f), 16);
+        Serial1.print(' ');
+    }
+    Serial1.println();
+    Serial1.flush();
+#endif
+}
+
+void USBCore_::logStatus(const char *status)
+{
+#ifdef USBCORE_TRACE
+    Serial1.println(status);
+    Serial1.flush();
+#endif
 }
 
 void USBCore_::connect()
@@ -584,6 +649,8 @@ void USBCore_::disconnect()
 // Must be called via ISR, or when the endpoint isn't in VALID status.
 int USBCore_::sendControl(uint8_t flags, const void* data, int len)
 {
+    USBCore().logEP('+', 0, '>', len);
+
     uint8_t* d = (uint8_t*)data;
     auto usbd = &USBCore().usbDev();
     auto l = min(len, this->maxWrite);
@@ -674,9 +741,13 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
     auto wrote = 0;
     auto usbd = &USBCore().usbDev();
 
+    usb_disable_interrupts();
+    // USBCore().logEP('+', ep, '>', len);
+    usb_enable_interrupts();
 #ifdef USBD_REMOTE_WAKEUP
     usb_disable_interrupts();
     if (usbd->cur_status == USBD_SUSPENDED && usbd->pm.remote_wakeup) {
+        USBCore().logStatus("Remote wakeup");
         usb_enable_interrupts();
         usbd_remote_wakeup_active(usbd);
     } else {
@@ -738,6 +809,8 @@ int USBCore_::flush(uint8_t ep)
         auto usbd = &USBCore().usbDev();
         usbd->transc_in[0].xfer_buf = ctlBuf;
         usbd->transc_in[0].xfer_len = ctlIdx;
+        USBCore().logEP('_', 0, '>', ctlIdx);
+        // USBCore().hexDump('>', ctlBuf, ctlIdx);
     } else {
         EPBuffers().buf(ep).flush();
     }
@@ -796,6 +869,8 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
         return;
     }
 
+    USBCore().hexDump('^', (uint8_t *)&usbd->control.req, 8);
+
     this->maxWrite = usbd->control.req.wLength;
     switch (usbd->control.req.bmRequestType & USB_REQTYPE_MASK) {
         /* standard device request */
@@ -849,19 +924,29 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
 // Called in interrupt context.
 void USBCore_::transcOut(usb_dev* usbd, uint8_t ep)
 {
+    auto transc = &usbd->transc_out[ep];
+    auto count = transc->xfer_count;
     EPBuffers().buf(ep).transcOut();
+    USBCore().logEP(':', ep, '<', count);
     if (ep == 0) {
         this->oldTranscOut(usbd, ep);
     }
+    USBCore().logEP('.', ep, '<', count);
 }
 
 // Called in interrupt context.
 void USBCore_::transcIn(usb_dev* usbd, uint8_t ep)
 {
+    auto transc = &usbd->transc_in[ep];
+    USBCore().logEP(':', ep, '>', transc->xfer_count);
     EPBuffers().buf(ep).transcIn();
-    if (ep == 0) {
+     if (ep == 0) {
         this->oldTranscIn(usbd, ep);
     }
+    if (usbd->control.ctl_state != USBD_CTL_STATUS_OUT) {
+        USBCore().logEP('.', ep, '>', transc->xfer_count);
+    }
+    transc->xfer_count = 0;
 }
 
 void USBCore_::sendDeviceConfigDescriptor()

@@ -18,6 +18,13 @@ extern "C" {
 #endif
 
 /*
+ * Default speed for trace logging serial port
+ */
+#ifndef USBCORE_TRACE_SPEED
+#define USBCORE_TRACE_SPEED 230400
+#endif
+
+/*
  * Descriptor for storing an endpoint’s direction, type, and max
  * packet length.
  */
@@ -170,6 +177,10 @@ class USBCore_
 
         uint8_t setupCtlOut(usb_req* req);
         void ctlOut(usb_dev* udev);
+
+        void logEP(char kind, uint8_t ep, char dir, size_t len);
+        void hexDump(char prefix, const uint8_t *buf, size_t len);
+        void logStatus(const char *status);
         /*
          * Static member function helpers called from ISR.
          *
