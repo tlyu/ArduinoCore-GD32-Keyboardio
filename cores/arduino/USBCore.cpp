@@ -545,6 +545,27 @@ void USBCore_::setResetHook(void (*hook)())
     resetHook = hook;
 }
 
+#ifdef USBD_ERROR_HOOKS
+static void handleSetupErr(uint8_t len)
+{
+    USBCore().logEP('!', 0, '<', len);
+    usbd_ep_ram *btable_ep = (usbd_ep_ram *)(USBD_RAM + 2 * (BTABLE_OFFSET & 0xFFF8));
+    uint32_t *p = (uint32_t *)(USBD_RAM + 2U * EP0_RX_ADDR);
+    uint16_t buf[USBD_EP0_MAX_SIZE/2];
+    for (int i = 0; i < USBD_EP0_MAX_SIZE/2; i++) {
+        buf[i] = p[i];
+    }
+    USBCore().hexDump('!', (uint8_t *)buf, USBD_EP0_MAX_SIZE);
+    auto bytes = (uint16_t)(btable_ep[0].rx_count & EPRCNT_CNT);
+    USBCore().logEP('.', 0, '!', bytes);
+}
+
+static void handleErr()
+{
+    USBCore().logStatus("Error");
+}
+#endif
+
 void (*oldSuspendHandler)();
 void handleSuspend()
 {
@@ -575,6 +596,11 @@ USBCore_::USBCore_()
 
     oldResetHandler = usbd.drv_handler->ep_reset;
     usbd.drv_handler->ep_reset = handleReset;
+
+#ifdef USBD_ERROR_HOOKS
+    usbd.drv_handler->err = handleErr;
+    usbd.drv_handler->setup_err = handleSetupErr;
+#endif
 
     oldSuspendHandler = usbd.drv_handler->suspend;
     usbd.drv_handler->suspend = handleSuspend;
