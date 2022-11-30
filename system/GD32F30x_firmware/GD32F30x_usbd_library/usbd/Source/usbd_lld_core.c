@@ -411,7 +411,8 @@ static void usbd_ep_stall_clear (usb_dev *udev, uint8_t ep_addr)
     uint8_t ep_num = EP_ID(ep_addr);
 
     if (EP_DIR(ep_addr)) {
-        if(EPTX_STALL == usbd_ep_status_get(udev, ep_addr)){
+        /* don't change status of a disabled endpoint */
+        if (EPTX_DISABLED != usbd_ep_status_get(udev, ep_addr)) {
             /* clear endpoint data toggle bit */
             USBD_TX_DTG_CLEAR(ep_num);
 
@@ -421,7 +422,8 @@ static void usbd_ep_stall_clear (usb_dev *udev, uint8_t ep_addr)
             USBD_EP_TX_STAT_SET(ep_num, EPTX_VALID);
         }
     } else {
-        if(EPRX_STALL == usbd_ep_status_get(udev, ep_addr)){
+        /* don't change status of a disabled endpoint */
+        if (EPRX_DISABLED != usbd_ep_status_get(udev, ep_addr)) {
             /* clear endpoint data toggle bit */
             USBD_RX_DTG_CLEAR(ep_num);
 
