@@ -179,50 +179,60 @@ OF SUCH DAMAGE.
 
 /* USBD operation macros */
 
+/* invariant EPxCS value that won't change volatile bits */
+#define EPCS_SAVE(ep)                  ((USBD_EPxCS(ep) & EPCS_MASK) | \
+                                        EPxCS_RX_ST | EPxCS_TX_ST)
+
 /* Tx or Rx transfer status setting (bits EPTX_STA[1:0]) */
 
 #define USBD_EP_TX_STAT_SET(ep, stat) do {\
-    USBD_EPxCS(ep) = (USBD_EPxCS(ep) & (uint16_t)EPTX_DTGMASK) ^ (stat); \
+    __IO uint16_t _regval = (USBD_EPxCS(ep) & EPTX_DTGMASK) ^ (stat); \
+    /* avoid clearing interrupt flags */ \
+    USBD_EPxCS(ep) = _regval | EPxCS_RX_ST | EPxCS_TX_ST; \
 } while(0)
 
 #define USBD_EP_RX_STAT_SET(ep, stat) do {\
-    USBD_EPxCS(ep) = (USBD_EPxCS(ep) & (uint16_t)EPRX_DTGMASK) ^ (stat); \
+    __IO uint16_t _regval = (USBD_EPxCS(ep) & EPRX_DTGMASK) ^ (stat); \
+    /* avoid clearing interrupt flags */ \
+    USBD_EPxCS(ep) = _regval | EPxCS_RX_ST | EPxCS_TX_ST; \
 } while(0)
 
 /* clear bit EPxCS_RX_ST/EPxCS_TX_ST in the endpoint control and status register */
 
 #define USBD_EP_TX_ST_CLEAR(ep) do {\
-    USBD_EPxCS(ep) &= ~EPxCS_TX_ST & (uint16_t)EPCS_MASK; \
+    USBD_EPxCS(ep) = ~EPxCS_TX_ST & EPCS_SAVE(ep); \
 } while(0)
 
 #define USBD_EP_RX_ST_CLEAR(ep) do {\
-    USBD_EPxCS(ep) &= ~EPxCS_RX_ST & (uint16_t)EPCS_MASK; \
+    USBD_EPxCS(ep) = ~EPxCS_RX_ST & EPCS_SAVE(ep); \
 } while(0)
 
 /* toggle EPxCS_RX_DTG or EPxCS_TX_DTG bit in the endpoint control and status register */
 
 #define USBD_TX_DTG_TOGGLE(ep) do {\
-    USBD_EPxCS(ep) = EPxCS_TX_DTG | (USBD_EPxCS(ep) & EPCS_MASK); \
+    USBD_EPxCS(ep) = EPxCS_TX_DTG | EPCS_SAVE(ep); \
 } while(0)
 
 #define USBD_RX_DTG_TOGGLE(ep) do {\
-    USBD_EPxCS(ep) = EPxCS_RX_DTG | (USBD_EPxCS(ep) & EPCS_MASK); \
+    USBD_EPxCS(ep) = EPxCS_RX_DTG | EPCS_SAVE(ep); \
 } while(0)
 
 /* clear EPxCS_RX_DTG or EPxCS_TX_DTG bit in the endpoint control and status register */
 
 #define USBD_TX_DTG_CLEAR(ep) do {\
-    if ((USBD_EPxCS(ep_num) & EPxCS_TX_DTG) != 0U) {\
-        USBD_TX_DTG_TOGGLE(ep);\
-    } \
+    /* writing back the same DTG bit will clear it */ \
+    __IO uint16_t _regval = USBD_EPxCS(ep) & (EPxCS_TX_DTG | EPCS_MASK); \
+    /* avoid clearing interrupt flags */ \
+    USBD_EPxCS(ep) = _regval | EPxCS_RX_ST | EPxCS_TX_ST; \
 } while(0)
 
 #define USBD_RX_DTG_CLEAR(ep) do {\
-    if ((USBD_EPxCS(ep_num) & EPxCS_RX_DTG) != 0U) {\
-        USBD_RX_DTG_TOGGLE(ep);\
-    } \
+    /* writing back the same DTG bit will clear it */ \
+    __IO uint16_t _regval = USBD_EPxCS(ep) & (EPxCS_RX_DTG | EPCS_MASK); \
+    /* avoid clearing interrupt flags */ \
+    USBD_EPxCS(ep) = _regval | EPxCS_RX_ST | EPxCS_TX_ST; \
 } while(0)
 
-#define USBD_EP_DBL_BUF_SET(ep) (USBD_EPxCS(ep) = (USBD_EPxCS(ep) | EPxCS_KCTL) & EPCS_MASK)
+#define USBD_EP_DBL_BUF_SET(ep) (USBD_EPxCS(ep) = EPCS_SAVE(ep) | EPxCS_KCTL)
 
 #endif /* __USBD_LLD_REGS_H */
