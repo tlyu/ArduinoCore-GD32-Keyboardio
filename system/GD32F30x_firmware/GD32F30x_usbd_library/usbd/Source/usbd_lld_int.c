@@ -204,9 +204,6 @@ void usbd_isr (void)
     }
 
     if (INTF_WKUPIF & int_flag) {
-        /* clear wakeup interrupt flag in INTF */
-        CLR(WKUPIF);
-
         /* restore the old cur_status */
         udev->cur_status = udev->backup_status;
 
@@ -226,6 +223,9 @@ void usbd_isr (void)
             resume_mcu(udev);
         }
 #endif /* LPM_ENABLED */
+
+        /* clear wakeup interrupt flag in INTF */
+        CLR(WKUPIF);
     }
 
     if (INTF_SPSIF & int_flag) {
