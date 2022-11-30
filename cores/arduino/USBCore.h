@@ -156,6 +156,12 @@ class USBCore_
         int recv(uint8_t ep);
         int flush(uint8_t ep);
 
+        // Debug counters
+        volatile uint16_t nreset;
+        volatile uint16_t nsusp;
+        volatile uint16_t nresume;
+        volatile uint16_t nerror;
+
         void setupClass(uint16_t wLength);
         void ctlOut(usb_dev* udev);
 
