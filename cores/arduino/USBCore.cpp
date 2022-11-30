@@ -532,6 +532,7 @@ void (*oldResetHandler)(usb_dev *usbd);
 void handleReset(usb_dev *usbd)
 {
     USBCore().logStatus("Reset");
+    USBCore().nreset++;
     USBCore().setupClass(0);
     EPBuffers().init();
     if (resetHook) {
@@ -563,6 +564,7 @@ static void handleSetupErr(uint8_t len)
 static void handleErr()
 {
     USBCore().logStatus("Error");
+    USBCore().nerror++;
 }
 #endif
 
@@ -570,6 +572,7 @@ void (*oldSuspendHandler)();
 void handleSuspend()
 {
     USBCore().logStatus("Suspend");
+    USBCore().nsusp++;
     oldSuspendHandler();
 }
 
@@ -579,6 +582,7 @@ void handleResume()
     usb_disable_interrupts();
     USBCore().logStatus("Resume");
     usb_enable_interrupts();
+    USBCore().nresume++;
     oldResumeHandler();
 }
 
