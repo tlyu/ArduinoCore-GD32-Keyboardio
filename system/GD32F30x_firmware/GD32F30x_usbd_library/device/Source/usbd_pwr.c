@@ -55,7 +55,25 @@ void usbd_remote_wakeup_active(usb_dev *udev)
 
     if(1U == udev->pm.remote_wakeup){
         udev->pm.remote_wakeup_on = 1U;
-        udev->pm.esof_count = 15U;
+        /*
+         * bugfix: send remote wakeup for minimum, not maximum time
+         *
+         * The USB 2.0 specification says that the minimum length of a remote
+         * wakeup sent by a device is 1ms, with a maximum of 15ms. The ISR
+         * handles this by counting ESOF events, so we need to see two of them
+         * to ensure that at least 1ms has elapsed.
+         *
+         * We add another 3 ESOFs just in case the peripheral doesn't enforce
+         * the total minimum bus idle period of 5ms prior to sending a remote
+         * wakeup. (3ms of idle are consumed by the suspend detection process)
+         *
+         * We don't want to use the maximum, because we might exceed it if we
+         * count 15 ESOFs. Also, we don't want to miss any traffic by sending
+         * the resume for too long, because there might be noncompliant hosts
+         * or hubs that don't reflect the resume for the full 20ms required by
+         * the spec.
+         */
+        udev->pm.esof_count = 5U;
         udev->drv_handler->resume(udev);
     }
 }

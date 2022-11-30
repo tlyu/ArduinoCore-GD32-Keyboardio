@@ -112,7 +112,15 @@ void _usb_out0_transc (usb_dev *udev, uint8_t ep_num)
 {
     if (((uint8_t)USBD_CONFIGURED == udev->cur_status) && (udev->class_core->ctlx_out != NULL)) {
         /* device class handle */
-        (void)udev->class_core->ctlx_out(udev);
+        /*
+         * bugfix: actually check return value from ctlx_out. This allows
+         * the Arduino core to defer the OUT setup validation to ctlx_out,
+         * and for the Arduino core's recvControl to work as expected.
+         */
+        if (USBD_OK != udev->class_core->ctlx_out(udev)) {
+            usb_stall_transc(udev);
+            return;
+        };
     }
 
     if (USBD_CTL_DATA_OUT == udev->control.ctl_state) {
