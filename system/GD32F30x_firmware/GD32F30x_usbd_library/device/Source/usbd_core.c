@@ -123,9 +123,11 @@ void usbd_ep_send (usb_dev *udev, uint8_t ep_addr, uint8_t *pbuf, uint16_t buf_l
 
     uint16_t len = USB_MIN(buf_len, transc->max_len);
 
-    /* configure the transaction level parameters */
+    /*
+     * bugfix: configure transaction for next packet, because ISR can fire
+     * before ep_write returns
+     */
+    usb_transc_config(transc, pbuf + len, buf_len - len, len);
 
     udev->drv_handler->ep_write(pbuf, ep_num, len);
-
-    usb_transc_config(transc, pbuf + len, buf_len - len, len);
 }
