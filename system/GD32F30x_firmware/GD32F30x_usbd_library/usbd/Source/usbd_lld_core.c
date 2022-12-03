@@ -373,6 +373,10 @@ static void usbd_ep_rx_enable (usb_dev *udev, uint8_t ep_addr)
 {
     (void)udev;
 
+    /* don't enable receive if a setup packet has come in */
+    if (0U == EP_ID(ep_addr) && (USBD_EPxCS(0U) & EPxCS_RX_ST)) {
+        return;
+    }
     /* enable endpoint to receive */
     USBD_EP_RX_STAT_SET(EP_ID(ep_addr), EPRX_VALID);
 }
