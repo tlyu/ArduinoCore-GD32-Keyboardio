@@ -532,6 +532,7 @@ void (*oldResetHandler)(usb_dev *usbd);
 void handleReset(usb_dev *usbd)
 {
     USBCore().logStatus("Reset");
+    USBCore().setupClass(0);
     EPBuffers().init();
     if (resetHook) {
         resetHook();
@@ -643,6 +644,9 @@ void USBCore_::setupClass(uint16_t wLength)
     this->ctlIdx = 0;
     this->ctlOutLen = 0;
     this->maxWrite = wLength;
+    auto usbd = &USBCore().usbDev();
+    usb_transc_config(&usbd->transc_in[0], NULL, 0, 0);
+    usb_transc_config(&usbd->transc_out[0], NULL, 0, 0);
 }
 
 // Send ‘len’ octets of ‘d’ through the control pipe (endpoint 0).
