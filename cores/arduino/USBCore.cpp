@@ -583,14 +583,45 @@ USBCore_::USBCore_()
 void USBCore_::logEP(char kind, uint8_t ep, char dir, size_t len)
 {
 #ifdef USBCORE_TRACE
+    usbd_ep_ram *btable_ep = (usbd_ep_ram *)(USBD_RAM + 2 * (BTABLE_OFFSET & 0xFFF8));
+    auto rxcnt = &btable_ep[0].rx_count;
     Serial1.print(USBD_EPxCS(ep), 16);
     Serial1.print(kind);
     Serial1.print(ep);
     Serial1.print(dir);
     Serial1.print(len);
+#if 0
     Serial1.print(' ');
-    Serial1.println(USBD_EPxCS(ep), 16);
-    Serial1.flush();
+    Serial1.print(USBD_EPxCS(ep), 16);
+    Serial1.print('(');
+    Serial1.print(*rxcnt & EPRCNT_CNT);
+    Serial1.print(')');
+    delayMicroseconds(100);
+    Serial1.print(' ');
+    Serial1.print(USBD_EPxCS(ep), 16);
+    Serial1.print('(');
+    Serial1.print(*rxcnt & EPRCNT_CNT);
+    Serial1.print(')');
+    delayMicroseconds(100);
+    Serial1.print(' ');
+    Serial1.print(USBD_EPxCS(ep), 16);
+    Serial1.print('(');
+    Serial1.print(*rxcnt & EPRCNT_CNT);
+    Serial1.print(')');
+    delayMicroseconds(100);
+    Serial1.print(' ');
+    Serial1.print(USBD_EPxCS(ep), 16);
+    Serial1.print('(');
+    Serial1.print(*rxcnt & EPRCNT_CNT);
+    Serial1.print(')');
+    delayMicroseconds(100);
+#endif
+    Serial1.print(' ');
+    Serial1.print(USBD_EPxCS(ep), 16);
+    Serial1.print('(');
+    Serial1.print(*rxcnt & EPRCNT_CNT);
+    Serial1.println(')');
+    // Serial1.flush();
 #endif
 }
 
@@ -604,7 +635,7 @@ void USBCore_::hexDump(char prefix, const uint8_t *buf, size_t len)
         Serial1.print(' ');
     }
     Serial1.println();
-    Serial1.flush();
+    // Serial1.flush();
 #endif
 }
 
@@ -612,7 +643,7 @@ void USBCore_::logStatus(const char *status)
 {
 #ifdef USBCORE_TRACE
     Serial1.println(status);
-    Serial1.flush();
+    // Serial1.flush();
 #endif
 }
 
