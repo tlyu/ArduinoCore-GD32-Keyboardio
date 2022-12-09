@@ -133,6 +133,14 @@ void EPBuffer<L>::init(uint8_t ep)
     this->reset();
     this->rxWaiting = false;
     this->txWaiting = false;
+    this->timedOut = false;
+    this->timeout = 100;
+}
+
+template<size_t L>
+void EPBuffer<L>::setTimeout(uint16_t timeout)
+{
+    this->timeout = timeout;
 }
 
 template<size_t L>
@@ -236,6 +244,9 @@ void EPBuffer<L>::flush()
     // fall through
     case USBD_CONFIGURED:
     case USBD_SUSPENDED: {
+        if (this->timedOut) {
+            break;
+        }
         // This will temporarily reenable and disable interrupts
         auto canWrite = this->waitForWriteComplete();
         if (canWrite) {
@@ -246,6 +257,7 @@ void EPBuffer<L>::flush()
             // Only start the next transmission if the device hasn't been
             // reset.
             this->txWaiting = true;
+            this->startTime = millis();
             usbd_ep_send(&USBCore().usbDev(), this->ep, (uint8_t *)this->buf, this->len());
             USBCore().logEP('>', this->ep, '>', this->len());
         }
@@ -287,6 +299,7 @@ template<size_t L>
 void EPBuffer<L>::transcIn()
 {
     this->txWaiting = false;
+    this->timedOut = false;
 }
 
 // Unused?
@@ -306,6 +319,12 @@ bool EPBuffer<L>::waitForWriteComplete()
     auto ok = true;
     do {
         usb_enable_interrupts();
+        if (this->txWaiting && millis() - this->startTime > this->timeout) {
+            ok = false;
+            this->timedOut = true;
+            USBCore().logEP('X', this->ep, '>', this->len());
+            break;
+        }
         switch (USBCore().usbDev().cur_status) {
         case USBD_DEFAULT:
         case USBD_ADDRESSED:
@@ -856,6 +875,11 @@ int USBCore_::flush(uint8_t ep)
         EPBuffers().buf(ep).flush();
     }
     return 0;
+}
+
+void USBCore_::setTimeout(uint8_t ep, uint16_t timeout)
+{
+    EPBuffers().buf(ep).setTimeout(timeout);
 }
 
 void USBCore_::transcSetupHelper(usb_dev* usbd, uint8_t ep)
