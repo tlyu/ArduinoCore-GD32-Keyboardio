@@ -609,38 +609,38 @@ void USBCore_::logEP(char kind, uint8_t ep, char dir, size_t len)
     Serial1.print(ep);
     Serial1.print(dir);
     Serial1.print(len);
-#if 0
+#if 1
     Serial1.print(' ');
     Serial1.print(USBD_EPxCS(ep), 16);
     Serial1.print('(');
     Serial1.print(*rxcnt & EPRCNT_CNT);
     Serial1.print(')');
-    delayMicroseconds(100);
+    delayMicroseconds(200);
     Serial1.print(' ');
     Serial1.print(USBD_EPxCS(ep), 16);
     Serial1.print('(');
     Serial1.print(*rxcnt & EPRCNT_CNT);
     Serial1.print(')');
-    delayMicroseconds(100);
+    delayMicroseconds(200);
     Serial1.print(' ');
     Serial1.print(USBD_EPxCS(ep), 16);
     Serial1.print('(');
     Serial1.print(*rxcnt & EPRCNT_CNT);
     Serial1.print(')');
-    delayMicroseconds(100);
+    delayMicroseconds(200);
     Serial1.print(' ');
     Serial1.print(USBD_EPxCS(ep), 16);
     Serial1.print('(');
     Serial1.print(*rxcnt & EPRCNT_CNT);
     Serial1.print(')');
-    delayMicroseconds(100);
+    delayMicroseconds(200);
 #endif
     Serial1.print(' ');
     Serial1.print(USBD_EPxCS(ep), 16);
     Serial1.print('(');
     Serial1.print(*rxcnt & EPRCNT_CNT);
     Serial1.println(')');
-    // Serial1.flush();
+    Serial1.flush();
 #endif
 }
 
@@ -940,7 +940,7 @@ void USBCore_::transcIn(usb_dev* usbd, uint8_t ep)
     } else {
         EPBuffers().buf(ep).transcIn();
     }
-    if (usbd->control.ctl_state != USBD_CTL_STATUS_OUT) {
+    if (1 || usbd->control.ctl_state != USBD_CTL_STATUS_OUT) {
         USBCore().logEP('.', ep, '>', transc->xfer_count);
     }
     transc->xfer_count = 0;
