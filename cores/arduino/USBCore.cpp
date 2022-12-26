@@ -1017,4 +1017,9 @@ bool USBCore_::isSuspended()
 {
     return USBCore().usbDev().cur_status == USBD_SUSPENDED;
 }
+
+bool USBCore_::configured()
+{
+    return USBCore().usbDev().config != 0;
+}
 #endif
