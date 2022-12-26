@@ -176,7 +176,7 @@ typedef struct
 struct _usb_dev
 {
     /* basic parameters */
-    uint8_t         config;
+    __IO uint8_t    config;
     uint8_t         dev_addr;
 
     __IO uint8_t    cur_status;
