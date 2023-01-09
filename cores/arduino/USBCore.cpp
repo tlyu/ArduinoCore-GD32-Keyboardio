@@ -315,17 +315,21 @@ uint8_t* EPBuffer<L>::ptr()
 template<size_t L>
 bool EPBuffer<L>::waitForWriteComplete()
 {
-    // auto start = getCurrentMillis();
     auto ok = true;
+    auto desc = *EPBuffers().desc(this->ep);
+    auto udev = &USBCore().usbDev();
+
+    /*
+     * For interrupt EPs, count from now instead of from previous send.
+     * Otherwise, if a send occurs while the bus is suspended, the packet will
+     * be cheated of its full timeout.
+     */
+    if (desc.type() == USB_EP_ATTR_INT) {
+        this->startTime = millis();
+    }
     do {
         usb_enable_interrupts();
-        if (this->txWaiting && millis() - this->startTime > this->timeout) {
-            ok = false;
-            this->timedOut = true;
-            USBCore().logEP('X', this->ep, '>', this->len());
-            break;
-        }
-        switch (USBCore().usbDev().cur_status) {
+        switch (udev->cur_status) {
         case USBD_DEFAULT:
         case USBD_ADDRESSED:
             ok = false;
@@ -333,11 +337,95 @@ bool EPBuffer<L>::waitForWriteComplete()
         default:
             break;
         }
-        // if (getCurrentMillis() - start > 5) {
-        //     EPBuffers().buf(ep).transcIn();
-        //     ok = false;
-        // }
         usb_disable_interrupts();
+        if (this->txWaiting && millis() - this->startTime > this->timeout) {
+            USBCore().logEP('X', this->ep, '>', this->len());
+            /*
+             * For interrupt EPs, overwrite the previous packet. In the common
+             * case of a key press HID report initiating a remote wakeup,
+             * transmission of the key release event might be delayed, because
+             * the host can't poll while the bus is suspended. If the
+             * application sends a key release event before the key press event
+             * is transmitted, that might time out. If the key release event is
+             * discarded due to the timeout, the host will never receive the
+             * key release event, leading to a stuck or repeating key.
+             */
+            if (desc.type() == USB_EP_ATTR_INT) {
+                /*
+                 * Set the endpoint status to NAK, in an attempt to prevent
+                 * the queued packet from being transmitted while being
+                 * overwritten.
+                 *
+                 * This must be done in two steps. Unfortunately, the USBD
+                 * peripheral's design doesn't seem to make it possible to
+                 * atomically abort a queued transmission. Even if interrupts
+                 * are disabled, the peripheral state machine continues to run.
+                 *
+                 * The endpoint status control bits are toggle-only (toggle on
+                 * writing 1; unchanged on writing 0). If the TX state
+                 * transitions from VALID to NAK during the read-modify-write,
+                 * a toggle operation (XOR 0b01) intended to transition from
+                 * VALID (0b11) to NAK (0b10) will set the status back to
+                 * VALID. This will cause the previous packet to be sent again.
+                 *
+                 * Instead, set the status to DISABLED (0b00, via XOR 0b11),
+                 * which will become STALL (0b01) if the peripheral transitions
+                 * the status to NAK between the read and the write. This can
+                 * happen if the transmission was in progress and the host ACKs
+                 * exactly between the read and the write to update the status
+                 * bits.
+                 *
+                 * Possible states after the first USBD_EP_TX_STAT_SET:
+                 *
+                 * - DISABLED (metastable if TX in progress)
+                 * - STALL (stable; only possible if we lost the r-m-w race)
+                 * - NAK (stable; only possible if TX completed after toggle)
+                 *
+                 * There is a small theoretical chance that the host will poll
+                 * the endpoint again between the two updates to the status
+                 * bits, which could lead to the host receiving a STALL
+                 * handshake, which would put the data toggle bit out of sync.
+                 *
+                 * The second host poll cannot complete sooner than 34 bit times
+                 * after the ACK from the first host poll. (2 bits inter-packet
+                 * delay, 8 bits sync, 8 bits PID, 16 bits addr/endpoint/CRC,
+                 * about 2.83 microseconds) The second status bit update will
+                 * complete before then, assuming reasonable CPU clock speeds
+                 * and no lengthy interrupt handler executions occurring.
+                 *
+                 * On the other hand, it's unknown when exactly the peripheral
+                 * checks the endpoint status bits to decide which response to
+                 * send to an IN poll. It might latch them at EOP, or SOP, or
+                 * maybe PID, or it might wait until after checking the CRC. So
+                 * the actual available time might be between 0 and 34 bit
+                 * times.
+                 *
+                 * We could globally disable interrupts to mitigate that, if
+                 * necessary.
+                 */
+                USBD_EP_TX_STAT_SET(this->ep, EPTX_DISABLED);
+                if (USBD_EPxCS(this->ep) & EPxCS_TX_STA == EPTX_DISABLED) {
+                    /*
+                     * If the endpoint is disabled, there might still be a
+                     * transmission in progress. Wait for it to complete:
+                     *
+                     * 1 byte sync + 1 byte PID + 64 bytes data + 2 bytes CRC,
+                     * 1 turn-around time,
+                     * 1 byte sync + 1 byte PID (handshake)
+                     * assuming maximum bit stuffing at full speed (12MHz).
+                     */
+                    delayMicroseconds(56);
+                }
+                // In case TX was in progress and completed
+                USBD_EP_TX_ST_CLEAR(this->ep);
+                USBD_EP_TX_STAT_SET(this->ep, EPTX_NAK);
+                break;
+            } else {
+                ok = false;
+                this->timedOut = true;
+                break;
+            }
+        }
     } while (ok && this->txWaiting);
     return ok;
 }
