@@ -229,6 +229,7 @@ static void usbd_ep_reset (usb_dev *udev)
     USBD_DADDR = DADDR_USBEN;
 
     udev->cur_status = (uint8_t)USBD_DEFAULT;
+    udev->config = 0U;
 }
 
 /*!
