@@ -162,6 +162,7 @@ class USBCore_
         int recv(uint8_t ep, void* data, int len);
         int recv(uint8_t ep);
         int flush(uint8_t ep);
+        void setResetHook(void (*hook)());
 
         /*
          * Static member function helpers called from ISR.

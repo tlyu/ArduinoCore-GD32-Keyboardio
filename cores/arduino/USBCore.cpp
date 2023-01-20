@@ -578,11 +578,20 @@ class ClassCore
         }
 };
 
+static void (*resetHook)();
 void (*oldResetHandler)(usb_dev *usbd);
 void handleReset(usb_dev *usbd)
 {
     EPBuffers().init();
+    if (resetHook) {
+        resetHook();
+    }
     oldResetHandler(usbd);
+}
+
+void USBCore_::setResetHook(void (*hook)())
+{
+    resetHook = hook;
 }
 
 USBCore_::USBCore_()
