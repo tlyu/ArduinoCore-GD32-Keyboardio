@@ -204,6 +204,8 @@ class USBCore_
         static void transcOutHelper(usb_dev* usbd, uint8_t ep);
         static void transcInHelper(usb_dev* usbd, uint8_t ep);
 
+        void buildDeviceConfigDescriptor();
+
         /*
          * Shadow the global ‘usbd’, which shouldn't be used directly,
          * so that all access is mediated by this class, ensuring all
@@ -242,8 +244,6 @@ class USBCore_
         void transcSetup(usb_dev* usbd, uint8_t ep);
         void transcOut(usb_dev* usbd, uint8_t ep);
         void transcIn(usb_dev* usbd, uint8_t ep);
-
-        void buildDeviceConfigDescriptor();
 
         void sendZLP(usb_dev* usbd, uint8_t ep);
 };

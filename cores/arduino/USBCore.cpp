@@ -642,6 +642,7 @@ void handleReset(usb_dev *usbd)
     USBCore().nreset++;
     USBCore().setupClass(0);
     EPBuffers().init();
+    USBCore().buildDeviceConfigDescriptor();
     if (resetHook) {
         resetHook();
     }
@@ -798,7 +799,6 @@ void USBCore_::logStatus(const char *status)
 
 void USBCore_::connect()
 {
-    USBCore().buildDeviceConfigDescriptor();
     usb_connect();
 }
 
