@@ -202,9 +202,6 @@ class USBCore_
         void transcIn(usb_dev* usbd, uint8_t ep);
 
         void sendDeviceConfigDescriptor();
-        void sendDeviceStringDescriptor();
-
-        void sendStringDesc(const char *str);
 
         void sendZLP(usb_dev* usbd, uint8_t ep);
 };
