@@ -61,6 +61,15 @@ enum _str_index
     STR_IDX_MAX                   = 0x6U         /* string index max value */
 };
 
+/*
+ * bugfix: generate a compile-time error if app doesn't define
+ * USB_STRING_COUNT; see usbd_enum.c
+ */
+/* application must define USB_STRING_COUNT in usbd_conf.h */
+#ifndef USB_STRING_COUNT
+#error "Must define USB_STRING_COUNT"
+#endif
+
 /* PWR status enumeration */
 typedef enum 
 {
