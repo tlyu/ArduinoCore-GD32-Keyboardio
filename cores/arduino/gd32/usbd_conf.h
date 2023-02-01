@@ -33,6 +33,14 @@
 
 #define EP_COUNT 8
 
+/*
+ * This must be set to the actual number of string descriptors, to ensure
+ * proper bounds checking in the low-level firmware.
+ *
+ * This also requires that the low-level firmware be patched to honor the
+ * application-set string count set in usbd_conf.h, instead of the hard-coded
+ * value STR_IDX_MAX.
+ */
 #define USB_STRING_COUNT 4
 
 /*

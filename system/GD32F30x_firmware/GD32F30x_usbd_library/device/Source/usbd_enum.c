@@ -450,7 +450,18 @@ static usb_reqsta _usb_std_getdescriptor (usb_dev *udev, usb_req *req)
             break;
 
         case USB_DESCTYPE_STR:
-            if (desc_index < STR_IDX_MAX) {
+            /*
+             * bugfix: avoid a read overrun vulnerability.
+             *
+             * Check index against USB_STRING_COUNT, which is set by the
+             * application in usbd_conf.h, not STR_IDX_MAX, which is hardcoded
+             * in usbd_enum.h. STR_IDX_MAX might be too large for some
+             * applications, causing a read past the end of the array.
+             *
+             * This could cause unwanted reads of up to 255 bytes at a time
+             * (the maximum total length of a string descriptor).
+             */
+            if (desc_index < USB_STRING_COUNT) {
                 transc->xfer_buf = std_desc_get[desc_type - 1U](udev, desc_index, &transc->xfer_len);
             }
             break;
