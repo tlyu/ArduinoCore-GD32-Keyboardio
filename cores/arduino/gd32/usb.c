@@ -1,4 +1,5 @@
 #ifdef USBCON
+#include "Arduino.h"
 #include "usb.h"
 
 #include "usbd_lld_int.h"
@@ -26,6 +27,14 @@ static void rcu_config()
 
     /* enable USB APB1 clock */
     rcu_periph_clock_enable(RCU_USBD);
+
+    rcu_osci_on(RCU_IRC48M);
+    RCU_ADDAPB1EN |= RCU_ADDAPB1EN_CTCEN;
+    ctc_interrupt_enable(CTC_INT_ERR | CTC_INT_CKWARN | CTC_INT_CKOK);
+    nvic_irq_enable(RCU_CTC_IRQn, 2, 0);
+    ctc_hardware_trim_mode_config(CTC_HARDWARE_TRIM_MODE_ENABLE);
+    ctc_clock_limit_value_config(28);
+    ctc_counter_enable();
 }
 
 static void gpio_config()

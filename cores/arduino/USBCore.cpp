@@ -9,6 +9,7 @@ extern "C" {
 #include "usbd_transc.h"
 }
 
+#include <math.h>
 #include <cassert>
 
 // bMaxPower in Configuration Descriptor
@@ -1124,4 +1125,49 @@ bool USBCore_::configured()
 {
     return USBCore().usbDev().config != 0;
 }
+
+extern "C" void RCU_CTC_IRQHandler()
+{
+    static bool errored;
+    static bool inited;
+    static float avg, var;
+    static float alpha = .001;
+    uint32_t stat = CTC_STAT;
+    if (stat & CTC_STAT_ERRIF) {
+#ifdef USBCORE_TRACE
+        Serial1.print("CTC_STAT=");
+        Serial1.print(stat, 16);
+        Serial1.print(" CTC_CTL0=");
+        Serial1.println(CTC_CTL0, 16);
+#endif
+        errored = true;
+    }
+    if (stat & (CTC_STAT_CKWARNIF | CTC_STAT_CKOKIF)) {
+        int ref = stat >> 16;
+        float diff;
+        ref *= stat & 0x8000 ? -1 : 1;
+        if (!inited) {
+            inited = true;
+            avg = ref;
+        }
+        diff = ref - avg;
+        avg += alpha * diff;
+        var = (1 - alpha) * (var + diff * alpha * diff);
+        if (errored || (millis() % 1000 == 0)) {
+            errored = false;
+#ifdef USBCORE_TRACE
+            Serial1.print("CTC_STAT=");
+            Serial1.print(stat, 16);
+            Serial1.print(" CTC_CTL0=");
+            Serial1.print(CTC_CTL0, 16);
+            Serial1.print(" avg=");
+            Serial1.print(avg);
+            Serial1.print(" dev=");
+            Serial1.println(sqrt(var));
+        }
+#endif
+    }
+    CTC_INTC |= 0xf;
+}
+
 #endif
