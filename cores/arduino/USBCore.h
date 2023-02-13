@@ -93,10 +93,6 @@ class EPBuffer
         void transcOut();
 
         /*
-         * Busy loop until the endpoint has a packet available.
-         */
-        bool waitForReadComplete();
-        /*
          * Busy loop until the endpoint has finished its current
          * transmission.
          */
@@ -142,8 +138,6 @@ class EPBuffers_
 
         static EPDesc* desc(uint8_t ep);
 
-        bool pollEPStatus();
-
     private:
         EPBuffer<L> epBufs[C];
 };
@@ -174,6 +168,8 @@ class USBCore_
         int flush(uint8_t ep);
         void setResetHook(void (*hook)());
 
+        uint8_t setupCtlOut(usb_req* req);
+        void ctlOut(usb_dev* udev);
         /*
          * Static member function helpers called from ISR.
          *
@@ -195,13 +191,20 @@ class USBCore_
         // TODO: verify that this only applies to the control endpoint’s use of wLength
         // I think this is only on the setup packet, so it should be fine.
         uint16_t maxWrite = 0;
-        // Has there been a recvControl (Data OUT) on this control transfer?
-        bool didCtlOut;
 
-        // Fixed size buffer for control transfers
-        uint8_t ctlBuf[USBCORE_CTL_BUFSZ];
-        // Next index in ctlBuf to be written to
+#define USBCORE_EP0_ROUND(n) \
+    (USBD_EP0_MAX_SIZE * (n + (USBD_EP0_MAX_SIZE - 1)) / USBD_EP0_MAX_SIZE)
+
+        /*
+         * Fixed size buffer for control transfers, rounded up to a multiple
+         * of the EP0 packet size, because low-level firmware doesn't properly
+         * limit write length to transc->xfer_len for control writes.
+         */
+        uint8_t ctlBuf[USBCORE_EP0_ROUND(USBCORE_CTL_BUFSZ)];
+        // Next index in ctlBuf to be written to or read from
         size_t ctlIdx;
+        // Transfer size for setCtlOutDest
+        size_t ctlOutLen;
 
         /*
          * Pointers to the transaction routines specified by ‘usbd_init’.

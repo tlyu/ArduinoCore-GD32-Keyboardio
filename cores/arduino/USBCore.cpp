@@ -294,24 +294,6 @@ uint8_t* EPBuffer<L>::ptr()
     return this->buf;
 }
 
-// Busy loop until an OUT packet has been received. Returns ‘false’ if
-// the device has been reset.
-// Must be called via ISR
-template<size_t L>
-bool EPBuffer<L>::waitForReadComplete()
-{
-    // auto start = getCurrentMillis();
-    auto ok = true;
-    while (ok && this->rxWaiting) {
-        ok = EPBuffers().pollEPStatus();
-        // if (getCurrentMillis() - start > 5) {
-        //     EPBuffers().buf(ep).transcIn();
-        //     return false;
-        // }
-    }
-    return ok;
-}
-
 // Busy loop until the latest IN packet has been sent. Returns ‘true’
 // if a new packet can be queued when this call completes.
 // Must run with interrupts disabled, which will be temporarily reenabled
@@ -322,7 +304,6 @@ bool EPBuffer<L>::waitForWriteComplete()
     auto ok = true;
     do {
         usb_enable_interrupts();
-        ok = EPBuffers().pollEPStatus();
         switch (USBCore().usbDev().cur_status) {
         case USBD_DEFAULT:
         case USBD_ADDRESSED:
@@ -368,88 +349,6 @@ EPDesc* EPBuffers_<L, C>::desc(uint8_t ep)
     return &descs[ep];
 }
 
-// Check if any endpoints have a received data or finished sending
-// data, updating their ‘waiting’ flags as a side-effect.
-//
-// Returns ‘false’ if the host has reset the device.
-template<size_t L, size_t C>
-bool EPBuffers_<L, C>::pollEPStatus()
-{
-    /*
-     * I’m not sure how much of this is necessary, but this is the
-     * series of checks that’s used by ‘usbd_isr’ to verify the IN
-     * packet has been sent.
-     */
-
-    uint16_t int_status = (uint16_t)USBD_INTF;
-    uint8_t ep_num = int_status & INTF_EPNUM;
-    /*
-     * If we are in interrupt context, we need to check for a
-     * device reset and terminate early so we don't spin forever
-     * waiting to complete a packet the host is no longer paying
-     * attention to.
-     *
-     * We /do not/ clear the flag, allowing the ISR to fire as
-     * soon as we've left this call, which will call into the
-     * normal reset routine.
-     */
-    auto ok = true;
-    if ((int_status & INTF_RSTIF) == INTF_RSTIF) {
-        // Indicate the device was reset to callers.
-        ok = false;
-    } else if ((int_status & INTF_STIF) == INTF_STIF) {
-        if ((int_status & INTF_DIR) == INTF_DIR
-            && (USBD_EPxCS(ep_num) & EPxCS_RX_ST) == EPxCS_RX_ST) {
-
-            if (USBD_EPxCS(ep_num) & EPxCS_SETUP) {
-                /*
-                 * We should abort a control transfer if we receive an
-                 * unexpected SETUP token, but unwinding all of that deeply
-                 * nested control flow is too error-prone.
-                 *
-                 * Also, we'd have to check whether the current flush is
-                 * part of a control transfer, or a non-control transfer,
-                 * so we can decide whether to abort the flush.
-                 */
-            }
-            usb_transc *transc = &USBCore().usbDev().transc_out[ep_num];
-            auto count = 0;
-            if (transc->xfer_buf) {
-                count = USBCore().usbDev().drv_handler->ep_read(transc->xfer_buf, ep_num, (uint8_t)EP_BUF_SNG);
-                transc->xfer_buf += count;
-                transc->xfer_count += count;
-            }
-            if ((transc->xfer_count >= transc->xfer_len)
-                || (count < transc->max_len)) {
-                /*
-                 * This bypasses the low-level Setup Data OUT stage
-                 * completion handlers, because we might need to read more
-                 * than one packet.
-                 */
-                EPBuffers().buf(ep_num).transcOut();
-            } else {
-                /*
-                 * Low-level firmware does the following, which we won't
-                 * do, because we only ever configure the transc to read a
-                 * single packet at a time.
-                 */
-                // udev->drv_handler->ep_rx_enable(udev, ep_num);
-            }
-            USBD_EP_RX_ST_CLEAR(ep_num);
-        } else if ((int_status & INTF_DIR) == 0
-                   && (USBD_EPxCS(ep_num) & EPxCS_TX_ST) == EPxCS_TX_ST) {
-            /*
-             * This bypasses low-level Setup Data IN stage completion
-             * handlers, because we might need to write more than one
-             * packet.
-             */
-            EPBuffers().buf(ep_num).transcIn();
-            USBD_EP_TX_ST_CLEAR(ep_num);
-        }
-    }
-    return ok;
-}
-
 EPBuffers_<USB_EP_SIZE, EP_COUNT>& EPBuffers()
 {
     static EPBuffers_<USB_EP_SIZE, EP_COUNT> obj;
@@ -458,6 +357,8 @@ EPBuffers_<USB_EP_SIZE, EP_COUNT>& EPBuffers()
 
 class ClassCore
 {
+    private:
+        static arduino::USBSetup setup;
     public:
         static usb_class *structPtr()
         {
@@ -534,8 +435,7 @@ class ClassCore
         {
             (void)usbd;
 
-            // TODO: remove this copy.
-            arduino::USBSetup setup;
+            // Stash setup contents for later use by ctlOut
             memcpy(&setup, req, sizeof(setup));
             if (setup.bRequest == USB_GET_DESCRIPTOR) {
                 auto sent = PluggableUSB().getDescriptor(setup);
@@ -549,6 +449,24 @@ class ClassCore
                 // Reset endpoint state on ClearFeature(EndpointHalt)
                 EPBuffers().buf(ep).init(ep);
                 return REQ_SUPP;
+            } else if ((req->bmRequestType & USB_TRX_MASK) == USB_TRX_OUT && req->wLength != 0) {
+                /*
+                 * Don't call the class setup functions for control writes that
+                 * have a data stage. Instead, defer them until we have
+                 * received the data.
+                 *
+                 * The low-level firmware ISR expects the class driver to only
+                 * validate the request header at this point, not to do a
+                 * blocking receive of the data stage. Arduino code expects to
+                 * be able to call recvControl from within the setup functions,
+                 * so we give them what they're expecting by deferring the
+                 * call.
+                 *
+                 * Unfortunately, this means that invalid requests aren't
+                 * rejected until the status stage, instead of at the data
+                 * stage.
+                 */
+                return USBCore().setupCtlOut(req);
             } else {
 #ifdef USBD_USE_CDC
                 if (CDCACM().setup(setup))
@@ -575,7 +493,16 @@ class ClassCore
         static uint8_t ctlOut(usb_dev* usbd)
         {
             (void)usbd;
-            return REQ_SUPP;
+            /*
+             * These do the deferred request validation, so that recvControl
+             * can read from an already-filled buffer.
+             */
+            if (CDCACM().setup(setup))
+                return USBD_OK;
+            if (PluggableUSB().setup(setup))
+                return USBD_OK;
+
+            return USBD_FAIL;
         }
 
         // Appears to be unused in usbd library, but used in usbfs.
@@ -594,6 +521,7 @@ class ClassCore
             return;
         }
 };
+arduino::USBSetup ClassCore::setup;
 
 static void (*resetHook)();
 void (*oldResetHandler)(usb_dev *usbd);
@@ -682,31 +610,29 @@ int USBCore_::sendControl(uint8_t flags, const void* data, int len)
     return len;
 }
 
-// Does not timeout or cross fifo boundaries. Returns the number of
-// octets read.
-//
-// This method reads directly into ‘data’ from the peripheral's
-// endpoint buffer, because the control endpoint is bi-directional,
-// but ‘EPBuffer’ only allows for one direction at a time.
+// Set up transaction for low-level firmware to copy control write contents
+uint8_t USBCore_::setupCtlOut(usb_req* req)
+{
+    if (req->wLength > USBCORE_CTL_BUFSZ) {
+        // Reject data that's larger than the static buffer
+        return REQ_NOTSUPP;
+    }
+    this->ctlOutLen = req->wLength;
+    usb_transc_config(&USBCore().usbDev().transc_out[0], this->ctlBuf, req->wLength, 0);
+    // Allow all properly-sized Data OUT; defer req validation to ctlOut
+    return REQ_SUPP;
+}
+
+// Copies control write data from the static buffer, after it's been received.
 // Must be called via ISR
 int USBCore_::recvControl(void* data, int len)
 {
-    uint8_t* d = (uint8_t*)data;
-    auto read = 0;
-    while (read < len) {
-        EPBuffers().buf(0).rxWaiting = true;
-        usb_transc_config(&USBCore().usbDev().transc_out[0], nullptr, 0, 0);
-        USBCore().usbDev().drv_handler->ep_rx_enable(&USBCore().usbDev(), 0);
-        if (!EPBuffers().buf(0).waitForReadComplete()) {
-            // Device was reset.
-            return -1;
-        }
-        read += USBCore().usbDev().drv_handler->ep_read(d+read, 0, (uint8_t)EP_BUF_SNG);
+    len = min(len, this->ctlOutLen - this->ctlIdx);
+    if (len == 0) {
+        return 0;
     }
-    assert(read == len);
-    if (len != 0) {
-        this->didCtlOut = true;
-    }
+    memcpy(data, &this->ctlBuf[this->ctlIdx], len);
+    this->ctlIdx += len;
     return len;
 }
 
@@ -854,8 +780,8 @@ usb_dev& USBCore_::usbDev()
 void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
 {
     (void)ep;
-    this->didCtlOut = false;
     this->ctlIdx = 0;
+    this->ctlOutLen = 0;
     // Configure empty transactions for default
     usb_transc_config(&usbd->transc_in[0], NULL, 0, 0);
     usb_transc_config(&usbd->transc_out[0], NULL, 0, 0);
@@ -915,15 +841,8 @@ void USBCore_::transcSetup(usb_dev* usbd, uint8_t ep)
         usbd_ep_send(usbd, 0, usbd->transc_in[0].xfer_buf, usbd->transc_in[0].xfer_len);
         // _usb_in0_transc will take care of Status OUT
     } else {
-        if (!this->didCtlOut) {
-            // Low-level firmware configured OUT buffer,
-            // or force a read because PluggableUSB accepted but read nothing
-            usbd->drv_handler->ep_rx_enable(usbd, 0);
-            // _usb_out0_transc will take care of Status IN
-        } else {
-            // Status IN after PluggableUSB did a read
-            this->sendZLP(usbd, 0);
-        }
+        usbd->drv_handler->ep_rx_enable(usbd, 0);
+        // _usb_out0_transc will take care of Status IN
     }
 }
 
