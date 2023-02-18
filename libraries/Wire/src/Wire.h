@@ -52,6 +52,7 @@ class TwoWire : public Stream
 
         uint8_t ownAddress;
         i2c_t _i2c;
+        uint32_t clock;
 
         static void (*user_onRequest)(void);
         static void (*user_onReceive)(int);

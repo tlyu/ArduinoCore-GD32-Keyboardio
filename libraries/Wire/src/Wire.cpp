@@ -27,6 +27,11 @@ extern "C" {
 
 #include "Wire.h"
 
+/* Whether to reset on busy timeouts. Maybe set to 0 if multi-controller. */
+#ifndef WIRE_RESET_ON_BUSY
+#define WIRE_RESET_ON_BUSY 1
+#endif
+
 void (*TwoWire::user_onRequest)(void);
 void (*TwoWire::user_onReceive)(int);
 
@@ -196,6 +201,22 @@ uint8_t TwoWire::endTransmission(uint8_t sendStop)
     _i2c.tx_count = 0;
     /* indicate that we are done transmitting */
     transmitting = 0;
+#if WIRE_RESET_ON_BUSY
+    /*
+     * The peripheral detects a BUSY condition if there is unexpected bus
+     * activity. This can happen due to glitches. It won't clear the BUSY
+     * condition until it detects a STOP condition, or the peripheral is
+     * reset. On a single-controller bus, this effectively means we have
+     * to reset the peripheral to clear the BUSY condition.
+     */
+    if (I2C_BUSY == ret) {
+        end();
+        begin();
+        if (0 != clock) {
+            setClock(clock);
+        }
+    }
+#endif
     return ret;
 }
 
@@ -332,6 +353,8 @@ void TwoWire::onRequest(void (*function)(void))
 
 void TwoWire::setClock(uint32_t clock_hz)
 {
+    // Save in case we need to restart for recovery
+    clock = clock_hz;
     //tests show tha clock can only be changed while the I2C peripheral is **of**.
     i2c_disable(_i2c.i2c);
     i2c_set_clock(&_i2c, clock_hz);
