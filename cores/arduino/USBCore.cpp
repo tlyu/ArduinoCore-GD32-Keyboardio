@@ -889,6 +889,15 @@ void USBCore_::transcOut(usb_dev* usbd, uint8_t ep)
     auto count = transc->xfer_count;
     USBCore().logEP(':', ep, '<', count);
     if (ep == 0) {
+        if (count != 0) {
+            if (usbd->control.ctl_state == USBD_CTL_STATUS_OUT) {
+                uint8_t buf[USBD_EP0_MAX_SIZE];
+                uint8_t count = usbd->drv_handler->ep_read(buf, 0U, EP_BUF_SNG);
+                USBCore().hexDump('!', buf, count);
+            } else {
+                USBCore().hexDump('<', ctlBuf, count);
+            }
+        }
         this->oldTranscOut(usbd, ep);
     } else {
         EPBuffers().buf(ep).transcOut();
@@ -905,6 +914,16 @@ void USBCore_::transcIn(usb_dev* usbd, uint8_t ep)
         this->oldTranscIn(usbd, ep);
     } else {
         EPBuffers().buf(ep).transcIn();
+    }
+    /*
+     * Do NOT log if about to do a Status OUT, because that is very
+     * timing-critical due to a possible hardware bug. If the Status
+     * OUT interrupt isn't handled quickly enough, a following SETUP
+     * packet could clobber it, even though the documentation says
+     * it's not supposed to.
+     */
+    if (usbd->control.ctl_state != USBD_CTL_STATUS_OUT) {
+        USBCore().logEP('.', ep, '>', transc->xfer_count);
     }
     transc->xfer_count = 0;
 }
