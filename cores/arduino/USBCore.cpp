@@ -494,6 +494,14 @@ class ClassCore
         {
             (void)usbd;
             /*
+             * If the control request is a read or a zero-length write,
+             * always return success, because this is probably coming from
+             * a Status OUT stage.
+             */
+            if ((setup.bmRequestType & USB_TRX_MASK) == USB_TRX_IN || setup.wLength == 0) {
+                return USBD_OK;
+            }
+            /*
              * These do the deferred request validation, so that recvControl
              * can read from an already-filled buffer.
              */
