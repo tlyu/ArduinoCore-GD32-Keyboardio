@@ -605,7 +605,15 @@ static usb_reqsta _usb_std_setconfiguration (usb_dev *udev, usb_req *req)
 
                 udev->config = config;
                 udev->cur_status = (uint8_t)USBD_ADDRESSED;
-            } else if (config != udev->config) {
+            } else {
+                /*
+                 * bugfix: always reinit on SetConfiguration, even if it's
+                 * the same. USB 2.0 section 9.4.6 specifies that
+                 * SetConfiguration and SetInterface always clear the Halt
+                 * feature, even if the new value is the same as the old.
+                 * This requires resetting the data toggles on endpoints that
+                 * use them.
+                 */
                 /* clear old configuration */
                 (void)udev->class_core->deinit(udev, udev->config);
 
@@ -613,8 +621,6 @@ static usb_reqsta _usb_std_setconfiguration (usb_dev *udev, usb_req *req)
                 udev->config = config;
 
                 (void)udev->class_core->init(udev, config);
-            } else {
-                /* no operation */
             }
             status = REQ_SUPP;
             break;
