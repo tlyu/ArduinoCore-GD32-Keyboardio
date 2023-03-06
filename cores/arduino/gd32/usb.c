@@ -66,14 +66,16 @@ void usb_connect()
 
 void usb_enable_interrupts()
 {
-    /* enable all interrupts mask bits */
-    USBD_CTL |= CTL_STIE | CTL_WKUPIE | CTL_SPSIE | CTL_SOFIE | CTL_ESOFIE | CTL_RSTIE;
+    NVIC_EnableIRQ(USBD_LP_CAN0_RX0_IRQn);
+    NVIC_EnableIRQ(USBD_HP_CAN0_TX_IRQn);
+    NVIC_EnableIRQ(USBD_WKUP_IRQn);
 }
 
 void usb_disable_interrupts()
 {
-    /* enable all interrupts mask bits */
-    USBD_CTL &= ~(CTL_STIE | CTL_WKUPIE | CTL_SPSIE | CTL_SOFIE | CTL_ESOFIE | CTL_RSTIE);
+    NVIC_DisableIRQ(USBD_WKUP_IRQn);
+    NVIC_DisableIRQ(USBD_HP_CAN0_TX_IRQn);
+    NVIC_DisableIRQ(USBD_LP_CAN0_RX0_IRQn);
 }
 
 void usb_disconnect()
