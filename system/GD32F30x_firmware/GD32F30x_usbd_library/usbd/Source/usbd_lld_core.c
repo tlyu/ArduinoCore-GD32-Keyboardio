@@ -255,11 +255,19 @@ static void usbd_ep_setup (usb_dev *udev, uint8_t buf_kind, uint32_t buf_addr, c
 
     /* set the endpoint type */
     USBD_EPxCS(ep_num) = ep_type[ep_desc->bmAttributes & USB_EPTYPE_MASK] | ep_num;
+    /*
+     * bugfix: disable endpoint and clear data toggle, in case this is a
+     * non-reset config event
+     */
+    usbd_ep_disable(udev, ep_addr);
 
     if (EP_DIR(ep_addr)) {
         transc = &udev->transc_in[ep_num];
 
         transc->max_len = max_len;
+
+        /* bugfix: clear ep_stall */
+        transc->ep_stall = 0U;
 
         if ((uint8_t)EP_BUF_SNG == buf_kind) {
             btable_ep[ep_num].tx_addr = buf_addr;
@@ -281,6 +289,9 @@ static void usbd_ep_setup (usb_dev *udev, uint8_t buf_kind, uint32_t buf_addr, c
         transc = &udev->transc_out[ep_num];
 
         transc->max_len = max_len;
+
+        /* bugfix: clear ep_stall */
+        transc->ep_stall = 0U;
 
         if ((uint8_t)EP_BUF_SNG == buf_kind) {
             btable_ep[ep_num].rx_addr = buf_addr;
