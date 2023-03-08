@@ -785,10 +785,6 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
         usb_enable_interrupts();
     }
 #endif
-    // Make sure any transactions made outside of PluggableUSB are
-    // cleaned up.
-    auto transc = &usbd->transc_in[ep];
-    usb_transc_config(transc, nullptr, 0, 0);
 
     // TODO: query the endpoint for its max packet length.
     while (wrote < len) {
