@@ -144,21 +144,30 @@ void usbd_isr (void)
                         }
                     }
                 }
-            } else {
-                /* handle the USB IN direction transaction */
-                if (USBD_EPxCS(ep_num) & EPxCS_TX_ST) {
-                    /* clear successful transmit interrupt flag */
-                    USBD_EP_TX_ST_CLEAR(ep_num);
+            }
+            /*
+             * bugfix: always check the TX completion flag. If a SETUP
+             * transaction comes in immediately after a Status IN transaction,
+             * the next iteration of the loop would otherwise take priority, if
+             * this block were instead inside an else clause. This would
+             * prevent the timely delivery of the TX completion notification,
+             * and might even cause it to be combined with a subsequent
+             * notification, causing unwanted application behavior or even data
+             * corruption.
+             */
+            /* handle the USB IN direction transaction */
+            if (USBD_EPxCS(ep_num) & EPxCS_TX_ST) {
+                /* clear successful transmit interrupt flag */
+                USBD_EP_TX_ST_CLEAR(ep_num);
 
-                    usb_transc *transc = &udev->transc_in[ep_num];
+                usb_transc *transc = &udev->transc_in[ep_num];
 
-                    if (0U == transc->xfer_len) {
-                        if (udev->ep_transc[ep_num][TRANSC_IN]) {
-                            udev->ep_transc[ep_num][TRANSC_IN](udev, ep_num);
-                        }
-                    } else {
-                        usbd_ep_send(udev, ep_num, transc->xfer_buf, transc->xfer_len);
+                if (0U == transc->xfer_len) {
+                    if (udev->ep_transc[ep_num][TRANSC_IN]) {
+                        udev->ep_transc[ep_num][TRANSC_IN](udev, ep_num);
                     }
+                } else {
+                    usbd_ep_send(udev, ep_num, transc->xfer_buf, transc->xfer_len);
                 }
             }
         }
