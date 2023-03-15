@@ -373,6 +373,18 @@ static void usbd_ep_rx_enable (usb_dev *udev, uint8_t ep_addr)
 {
     (void)udev;
 
+    /*
+     * bugfix: don't enable receive if a SETUP packet has come in. A host might
+     * abort a SETUP transfer, which means that the enabling of RX here could
+     * happen after the SETUP transaction has been accepted. This would enable
+     * ACK of a following Data OUT stage, which could then overwrite the packet
+     * buffer or flags corresponding to the SETUP transaction before the
+     * application has a chance to read them. This special case handling won't
+     * eliminate all related race conditions, but it's better than nothing.
+     */
+    if (0U == EP_ID(ep_addr) && (USBD_EPxCS(0U) & EPxCS_RX_ST)) {
+        return;
+    }
     /* enable endpoint to receive */
     USBD_EP_RX_STAT_SET(EP_ID(ep_addr), EPRX_VALID);
 }
