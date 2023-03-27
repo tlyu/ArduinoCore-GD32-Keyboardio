@@ -205,6 +205,7 @@ size_t EPBuffer<L>::sendSpace()
 template<size_t L>
 void EPBuffer<L>::flush()
 {
+    assert(this->ep != 0);
     usb_disable_interrupts();
     // Don't flush an empty buffer
     if (this->len() == 0) {
@@ -230,10 +231,7 @@ void EPBuffer<L>::flush()
     switch (USBCore().usbDev().cur_status) {
     case USBD_DEFAULT:
     case USBD_ADDRESSED:
-        if (this->ep != 0) {
-            break;
-        }
-    // fall through
+        break;
     case USBD_CONFIGURED:
     case USBD_SUSPENDED: {
         // This will temporarily reenable and disable interrupts
@@ -769,6 +767,9 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
     // Top nybble is used for flags.
     auto flags = ep & 0xf0;
     ep &= 0x7;
+    if (ep == 0) {
+        return -1;
+    }
     auto wrote = 0;
     auto usbd = &USBCore().usbDev();
 
