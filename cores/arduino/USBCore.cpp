@@ -131,6 +131,7 @@ void EPBuffer<L>::init(uint8_t ep)
 {
     this->ep = ep;
     this->reset();
+    this->pendingFlush = false;
     this->rxWaiting = false;
     this->txWaiting = false;
 }
@@ -145,11 +146,10 @@ size_t EPBuffer<L>::push(const void *d, size_t len)
         *this->p++ = *d8++;
     }
     assert(this->p >= this->buf);
-    auto doflush = (this->sendSpace() == 0);
-    usb_enable_interrupts();
-    if (doflush) {
+    if (this->sendSpace() == 0) {
         this->flush();
     }
+    usb_enable_interrupts();
     return w;
 }
 
@@ -199,32 +199,30 @@ size_t EPBuffer<L>::available()
 template<size_t L>
 size_t EPBuffer<L>::sendSpace()
 {
-    return L - this->len();
+    if (this->pendingFlush) {
+        // Report 0, to avoid consolidating packets
+        return 0;
+    } else {
+        return L - this->len();
+    }
 }
 
+// Must be called with interrupts disabled, or via ISR
 template<size_t L>
 void EPBuffer<L>::flush()
 {
     assert(this->ep != 0);
-    usb_disable_interrupts();
     // Don't flush an empty buffer
     if (this->len() == 0) {
-        usb_enable_interrupts();
         return;
     }
     /*
-     * Bounce out if a flush is already occurring. This is only
-     * possible when ‘flush’ is called from an interrupt, so the
-     * check-and-set must be done with interrupts disabled.
-     *
-     * This flag is still necessary, because interrupts can get
-     * reenabled while waiting to transmit.
+     * Don't do anything if a flush is pending on the buffer. The ISR will call
+     * us again once the queued transmission on the peripheral completes.
      */
-    if (this->currentlyFlushing) {
-        usb_enable_interrupts();
+    if (this->pendingFlush) {
         return;
     }
-    this->currentlyFlushing = true;
     USBCore().logEP('_', this->ep, '>', this->len());
 
     // Only attempt to send if the device is configured enough.
@@ -234,15 +232,19 @@ void EPBuffer<L>::flush()
         break;
     case USBD_CONFIGURED:
     case USBD_SUSPENDED: {
-        // This will temporarily reenable and disable interrupts
-        auto canWrite = this->waitForWriteComplete();
-        if (canWrite) {
-            // In case of an uncaught reset or configuration event
-            if (this->len() == 0) {
-                break;
-            }
-            // Only start the next transmission if the device hasn't been
-            // reset.
+        /*
+         * If there's already a queued transmission on the peripheral, mark
+         * the buffer as pending flush. The ISR will flush again once the
+         * queued packet is sent.
+         *
+         * This implements software double buffering. The hardware only
+         * supports double buffering on bulk or isochronous endpoints.
+         */
+        if (this->txWaiting) {
+            this->pendingFlush = true;
+            // Leave buffer pointers alone, to flush later
+            return;
+        } else {
             this->txWaiting = true;
             usbd_ep_send(&USBCore().usbDev(), this->ep, (uint8_t *)this->buf, this->len());
             USBCore().logEP('>', this->ep, '>', this->len());
@@ -253,8 +255,6 @@ void EPBuffer<L>::flush()
         break;
     }
     this->reset();
-    this->currentlyFlushing = false;
-    usb_enable_interrupts();
 }
 
 // Must be called with interrupts disabled
@@ -285,6 +285,14 @@ template<size_t L>
 void EPBuffer<L>::transcIn()
 {
     this->txWaiting = false;
+    /*
+     * If the buffer was waiting for a prior transmission to complete,
+     * flush it now.
+     */
+    if (this->pendingFlush) {
+        this->pendingFlush = false;
+        this->flush();
+    }
 }
 
 // Unused?
@@ -292,33 +300,6 @@ template<size_t L>
 uint8_t* EPBuffer<L>::ptr()
 {
     return this->buf;
-}
-
-// Busy loop until the latest IN packet has been sent. Returns ‘true’
-// if a new packet can be queued when this call completes.
-// Must run with interrupts disabled, which will be temporarily reenabled
-template<size_t L>
-bool EPBuffer<L>::waitForWriteComplete()
-{
-    // auto start = getCurrentMillis();
-    auto ok = true;
-    do {
-        usb_enable_interrupts();
-        switch (USBCore().usbDev().cur_status) {
-        case USBD_DEFAULT:
-        case USBD_ADDRESSED:
-            ok = false;
-            break;
-        default:
-            break;
-        }
-        // if (getCurrentMillis() - start > 5) {
-        //     EPBuffers().buf(ep).transcIn();
-        //     ok = false;
-        // }
-        usb_disable_interrupts();
-    } while (ok && this->txWaiting);
-    return ok;
 }
 
 template<size_t L, size_t C>
@@ -797,6 +778,7 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
         } else {
             w = EPBuffers().buf(ep).push(d, toWrite);
         }
+        // push() can write less than requested, due to pending flushes, etc
         d += w;
         wrote += w;
     }
@@ -840,7 +822,9 @@ int USBCore_::flush(uint8_t ep)
         USBCore().logEP('_', 0, '>', ctlIdx);
         // USBCore().hexDump('>', ctlBuf, ctlIdx);
     } else {
+        usb_disable_interrupts();
         EPBuffers().buf(ep).flush();
+        usb_enable_interrupts();
     }
     return 0;
 }
@@ -921,7 +905,6 @@ void USBCore_::transcIn(usb_dev* usbd, uint8_t ep)
     if (usbd->control.ctl_state != USBD_CTL_STATUS_OUT) {
         USBCore().logEP('.', ep, '>', transc->xfer_count);
     }
-    transc->xfer_count = 0;
 }
 
 void USBCore_::buildDeviceConfigDescriptor()

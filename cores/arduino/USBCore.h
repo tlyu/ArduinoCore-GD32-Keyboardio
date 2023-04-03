@@ -100,12 +100,6 @@ class EPBuffer
         void transcOut();
 
         /*
-         * Busy loop until the endpoint has finished its current
-         * transmission.
-         */
-        bool waitForWriteComplete();
-
-        /*
          * Flag for whether we are waiting for data from the host.
          *
          * If this is ‘true’, there is no data available in the
@@ -126,10 +120,8 @@ class EPBuffer
         volatile uint8_t* tail = buf;
         volatile uint8_t* p = buf;
 
-        /*
-         * Prevent more than one simultaneous call to ‘flush’.
-         */
-        volatile bool currentlyFlushing = false;
+        /* whether the buf contents are already waiting on another flush */
+        volatile bool pendingFlush = false;
 
         uint8_t ep;
 };
