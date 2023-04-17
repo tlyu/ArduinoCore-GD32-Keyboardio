@@ -17,6 +17,11 @@ extern "C" {
 #define USB_CONFIG_POWER                      (500)
 #endif
 
+// TX timeout in milliseconds
+#ifndef USBCORE_TIMEOUT
+#define USBCORE_TIMEOUT 250
+#endif
+
 // TODO: make the device descriptor a member variable which can be
 // overridden by subclasses.
 static usb_desc_dev devDesc = {
@@ -768,10 +773,17 @@ int USBCore_::send(uint8_t ep, const void* data, int len)
     }
 #endif
 
+    uint32_t start = millis();
     // TODO: query the endpoint for its max packet length.
     while (wrote < len) {
         auto w = 0;
         auto toWrite = len - wrote;
+        if (millis() - start > USBCORE_TIMEOUT) {
+            usb_disable_interrupts();
+            USBCore().logEP('X', ep, '>', len);
+            usb_enable_interrupts();
+            return -1;
+        }
         if (flags & TRANSFER_ZERO) {
             // TODO: handle writing zeros instead of ‘d’.
             return -1;
