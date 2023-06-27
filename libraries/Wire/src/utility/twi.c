@@ -437,6 +437,8 @@ static int i2c_byte_read(i2c_t *obj, int last)
 i2c_status_enum i2c_master_receive(i2c_t *obj, uint8_t address, uint8_t *data, uint16_t length,
                                    int stop)
 {
+    /* Whether we've tried to induce the erratum yet this time */
+    bool tweaked = false;
     i2c_status_enum ret = I2C_OK;
     uint32_t count = 0;
 
@@ -480,6 +482,15 @@ i2c_status_enum i2c_master_receive(i2c_t *obj, uint8_t address, uint8_t *data, u
         }
 
         ret = i2c_wait_flag(obj, I2C_STAT0_RBNE, WIRE_I2C_FLAG_TIMEOUT_BYTE_RECEIVED);
+        /*
+         * Attempt to induce the I2C erratum by delaying more than one byte
+         * time (assuming a 400kHz clock) so BTC gets set, but won't get
+         * cleared.
+         */
+        if (!tweaked && (millis() % 100) == 0) {
+            tweaked = true;
+            delayMicroseconds(37);
+        }
         if (ret == I2C_OK) {
             data[count] = i2c_data_receive(obj->i2c);
         }
